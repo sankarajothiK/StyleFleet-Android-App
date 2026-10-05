@@ -1,0 +1,65 @@
+{
+  "expo": {
+    "name": "StyleFleet",
+    "slug": "stylefleet",
+    "scheme": "stylefleet",
+    "version": "1.0.1",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0B1F44"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "infoPlist": {
+        "NSContactsUsageDescription": "StyleFleet needs access to your contacts to import clients into your salon roster."
+      }
+    },
+    "android": {
+      "package": "com.stylefleet.app",
+      "versionCode": 34,
+      "softwareKeyboardLayoutMode": "resize",
+      "permissions": [
+        "android.permission.READ_CONTACTS",
+        "android.permission.WRITE_CONTACTS"
+      ],
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0B1F44"
+      }
+    },
+    "plugins": [
+      [
+        "expo-font",
+        {
+          "fonts": [
+            "./assets/fonts/PlusJakartaSans_400Regular.ttf",
+            "./assets/fonts/PlusJakartaSans_500Medium.ttf",
+            "./assets/fonts/PlusJakartaSans_600SemiBold.ttf",
+            "./assets/fonts/PlusJakartaSans_700Bold.ttf",
+            "./assets/fonts/PlusJakartaSans_800ExtraBold.ttf"
+          ]
+        }
+      ],
+      [
+        "expo-contacts",
+        {
+          "contactsPermission": "StyleFleet needs access to your contacts to import clients into your salon roster."
+        }
+      ],
+      "expo-video"
+    ],
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "owner": "tecstellar2",
+    "extra": {
+      "eas": {
+        "projectId": "d24db262-2605-4f57-b392-8464f9f3d5e3"
+      }
+    }
+  }
+}

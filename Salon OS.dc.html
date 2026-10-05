@@ -1,0 +1,1470 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="design_doc_mode" content="canvas">
+<link rel="stylesheet" href="_ds/nocturne-575000cf-114a-4afc-b729-daceead92a5d/styles.css">
+<style>
+body{margin:0;background:#161826}
+a{color:var(--color-accent);text-decoration:none}
+a:hover{color:var(--color-accent-300)}
+button{font-family:inherit}
+::-webkit-scrollbar{width:0}
+</style>
+</helmet>
+<div ref="{{ rootRef }}" style="min-height:100vh;background:var(--color-bg);color:var(--color-text);font-family:var(--font-body);display:flex;gap:40px;padding:36px 44px 60px;align-items:flex-start">
+
+  <aside style="width:262px;flex:none;display:flex;flex-direction:column;gap:18px;position:sticky;top:36px">
+    <div>
+      <div style="font-size:10px;letter-spacing:.11em;text-transform:uppercase;color:var(--color-accent);margin-bottom:6px">Nocturne · prototype</div>
+      <div style="font:500 25px/1.1 var(--font-heading);letter-spacing:-.015em">Brave &amp; Cave</div>
+      <p style="font-size:12.5px;line-height:1.6;color:color-mix(in srgb,var(--color-text) 55%,transparent);margin:8px 0 0">Owner-and-front-desk app for the men's salon. Three tabs — Customers, Sales, Accounts — with everything operational filed under Accounts. Rupees, 6-digit PIN, OTP login, WhatsApp as the send channel. Theme lifted from the gold in your logo.</p>
+    </div>
+    <div style="height:1px;background:linear-gradient(to right,var(--color-divider),transparent)"></div>
+    <div style="display:flex;flex-direction:column;gap:9px">
+      <sc-for list="{{ railGroups }}" as="g" hint-placeholder-count="4">
+        <div>
+          <div style="font-size:9.5px;letter-spacing:.11em;text-transform:uppercase;color:color-mix(in srgb,var(--color-text) 40%,transparent);margin-bottom:6px">{{ g.label }}</div>
+          <div style="display:flex;flex-wrap:wrap;gap:5px">
+            <sc-for list="{{ g.items }}" as="it" hint-placeholder-count="4">
+              <button onClick="{{ it.on }}" style="cursor:pointer;font:500 11.5px var(--font-heading);padding:4px 9px;border-radius:6px;border:1px solid {{ it.border }};background:{{ it.bg }};color:{{ it.color }}" style-hover="background:color-mix(in srgb,var(--color-accent) 14%,transparent)">{{ it.label }}</button>
+            </sc-for>
+          </div>
+        </div>
+      </sc-for>
+    </div>
+    <div style="height:1px;background:linear-gradient(to right,var(--color-divider),transparent)"></div>
+    <p style="font-size:11.5px;line-height:1.6;color:color-mix(in srgb,var(--color-text) 42%,transparent);margin:0">Logo-driven theming is live: Accounts → Shop profile → Theme swatches repaints the accent across every screen.</p>
+  </aside>
+
+  <x-import component-from-global-scope="AndroidDevice" from="./android-frame.jsx" dark="{{ true }}" hint-size="412px,892px">
+    <div style="height:100%;position:relative;display:flex;flex-direction:column;background:var(--color-bg);font-size:14px">
+
+      <!-- ── OTP login ─────────────────────────────── -->
+      <sc-if value="{{ isPhone }}" hint-placeholder-val="{{ true }}">
+        <div style="flex:1;display:flex;flex-direction:column;padding:34px 22px 24px">
+          <img src="uploads/pasted-1786980089722-0.png" alt="Brave &amp; Cave" style="width:64px;height:64px;border-radius:16px;object-fit:cover;border:1px solid color-mix(in srgb,var(--color-accent) 40%,transparent)">
+          <div style="font:500 27px/1.15 var(--font-heading);letter-spacing:-.02em;margin:26px 0 6px">Sign in</div>
+          <p style="font-size:13.5px;color:color-mix(in srgb,var(--color-text) 55%,transparent);margin:0 0 26px">A 4-digit code goes to your shop's registered number. No passwords.</p>
+          <div class="field" style="margin-bottom:16px">
+            <label>Mobile number</label>
+            <div style="display:flex;gap:8px">
+              <div style="min-height:36px;display:flex;align-items:center;padding:0 10px;border:1px solid var(--color-divider);border-radius:var(--radius-md);background:var(--color-surface);font-size:14px;color:color-mix(in srgb,var(--color-text) 70%,transparent)">+91</div>
+              <input class="input" value="{{ phone }}" onChange="{{ onPhone }}" inputmode="numeric" placeholder="98450 62110">
+            </div>
+          </div>
+          <button class="btn btn-primary btn-block" onClick="{{ toOtp }}">Send OTP</button>
+          <div style="margin-top:auto;display:flex;flex-direction:column;gap:10px;align-items:center">
+            <div style="height:1px;width:100%;background:linear-gradient(to right,transparent,var(--color-divider),transparent)"></div>
+            <div style="font-size:12.5px;color:color-mix(in srgb,var(--color-text) 55%,transparent)">New salon? <a href="#" onClick="{{ toRegister }}">Register your shop</a></div>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ isOtp }}">
+        <div style="flex:1;display:flex;flex-direction:column;padding:22px 22px 20px">
+          <button class="btn btn-icon btn-secondary" onClick="{{ back }}" aria-label="Back"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M15 5l-7 7 7 7"></path></svg></button>
+          <div style="font:500 24px/1.15 var(--font-heading);margin:22px 0 6px">Enter the code</div>
+          <p style="font-size:13px;color:color-mix(in srgb,var(--color-text) 55%,transparent);margin:0 0 22px">Sent to +91 {{ phone }}</p>
+          <div style="display:flex;gap:10px;margin-bottom:14px">
+            <sc-for list="{{ otpBoxes }}" as="b" hint-placeholder-count="4">
+              <div style="flex:1;height:56px;border-radius:var(--radius-md);display:flex;align-items:center;justify-content:center;font:500 24px var(--font-heading);background:var(--color-surface);border:1px solid {{ b.border }};color:var(--color-text)">{{ b.d }}</div>
+            </sc-for>
+          </div>
+          <div style="font-size:12px;color:color-mix(in srgb,var(--color-text) 45%,transparent);margin-bottom:18px">{{ otpHint }}</div>
+          <button class="btn btn-primary btn-block" onClick="{{ verify }}" disabled="{{ otpIncomplete }}">Verify &amp; continue</button>
+          <div style="margin-top:auto;display:grid;grid-template-columns:repeat(3,1fr);gap:8px">
+            <sc-for list="{{ keypad }}" as="k" hint-placeholder-count="12">
+              <button onClick="{{ k.on }}" style="height:52px;border-radius:var(--radius-md);border:1px solid var(--color-divider);background:{{ k.bg }};color:var(--color-text);font:500 19px var(--font-heading);cursor:pointer" style-hover="border-color:var(--color-accent)">{{ k.label }}</button>
+            </sc-for>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ isRegister }}">
+        <div style="flex:1;overflow-y:auto;padding:22px 22px 26px">
+          <button class="btn btn-icon btn-secondary" onClick="{{ back }}" aria-label="Back"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M15 5l-7 7 7 7"></path></svg></button>
+          <div style="font:500 24px/1.15 var(--font-heading);margin:20px 0 4px">Register your shop</div>
+          <p style="font-size:12.5px;color:color-mix(in srgb,var(--color-text) 55%,transparent);margin:0 0 18px">Step 1 of 2 · shop &amp; address</p>
+          <div style="display:flex;gap:12px;align-items:center;padding:12px;border-radius:var(--radius-md);background:var(--color-surface);margin-bottom:16px">
+            <img src="uploads/pasted-1786980089722-0.png" alt="" style="width:56px;height:56px;flex:none;border-radius:12px;object-fit:cover">
+            <div style="font-size:12px;line-height:1.5;color:color-mix(in srgb,var(--color-text) 60%,transparent)">Logo read · gold <span style="color:var(--color-accent)">#D9A441</span> picked up as your theme colour. Change it in Shop profile.</div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:12px">
+            <div class="field"><label>Shop name</label><input class="input" value="{{ reg.shop }}" onChange="{{ onReg.shop }}"></div>
+            <div class="field"><label>Owner name</label><input class="input" value="{{ reg.owner }}" onChange="{{ onReg.owner }}"></div>
+            <div class="field"><label>Address</label><textarea class="input" style="min-height:64px" value="{{ reg.addr }}" onChange="{{ onReg.addr }}"></textarea></div>
+            <div style="display:flex;gap:10px">
+              <div class="field" style="flex:1"><label>City</label><input class="input" value="{{ reg.city }}" onChange="{{ onReg.city }}"></div>
+              <div class="field" style="width:112px"><label>PIN code</label><input class="input" value="{{ reg.pin }}" onChange="{{ onReg.pin }}" inputmode="numeric" maxlength="6"></div>
+            </div>
+            <div class="field"><label>GSTIN <span style="opacity:.6">· optional</span></label><input class="input" value="{{ reg.gst }}" onChange="{{ onReg.gst }}" placeholder="29ABCDE1234F1Z5"></div>
+          </div>
+          <button class="btn btn-primary btn-block" style="margin-top:18px" onClick="{{ toWorkers }}">Next · add your team</button>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ isWorkers }}">
+        <div style="flex:1;overflow-y:auto;padding:22px 22px 26px">
+          <button class="btn btn-icon btn-secondary" onClick="{{ back }}" aria-label="Back"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M15 5l-7 7 7 7"></path></svg></button>
+          <div style="font:500 24px/1.15 var(--font-heading);margin:20px 0 4px">Who works here?</div>
+          <p style="font-size:12.5px;color:color-mix(in srgb,var(--color-text) 55%,transparent);margin:0 0 18px">Step 2 of 2 · every bill gets tagged to a stylist, so Accounts can show what each one delivers.</p>
+          <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px">
+            <sc-for list="{{ staffDraft }}" as="s" hint-placeholder-count="4">
+              <div style="display:flex;align-items:center;gap:11px;padding:10px 12px;border-radius:var(--radius-md);background:var(--color-surface)">
+                <div style="width:32px;height:32px;flex:none;border-radius:50%;background:var(--color-accent-800);color:var(--color-accent-100);display:flex;align-items:center;justify-content:center;font:500 12.5px var(--font-heading)">{{ s.initials }}</div>
+                <div style="flex:1;min-width:0">
+                  <div style="font-size:14px">{{ s.name }}</div>
+                  <div style="font-size:11.5px;color:color-mix(in srgb,var(--color-text) 50%,transparent)">{{ s.role }}</div>
+                </div>
+                <button onClick="{{ s.remove }}" aria-label="Remove" style="background:transparent;border:0;cursor:pointer;color:color-mix(in srgb,var(--color-text) 45%,transparent);padding:4px"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M6 6l12 12M18 6L6 18"></path></svg></button>
+              </div>
+            </sc-for>
+          </div>
+          <div style="display:flex;gap:8px">
+            <input class="input" placeholder="Name" value="{{ newStaffName }}" onChange="{{ onNewStaffName }}">
+            <button class="btn btn-secondary" onClick="{{ addStaff }}">Add</button>
+          </div>
+          <button class="btn btn-primary btn-block" style="margin-top:20px" onClick="{{ finishSetup }}">Finish setup · {{ staffCount }} on the team</button>
+        </div>
+      </sc-if>
+
+      <!-- ── Customers ─────────────────────────────── -->
+      <sc-if value="{{ isCustomers }}">
+        <div style="padding:16px 16px 10px">
+          <div style="display:flex;align-items:baseline;gap:8px">
+            <div style="font:500 22px/1.1 var(--font-heading);letter-spacing:-.02em">Customers</div>
+            <div style="font-size:12px;color:color-mix(in srgb,var(--color-text) 45%,transparent)">{{ custTotal }} on file</div>
+            <button class="btn btn-ghost" style="margin-left:auto;font-size:13px" onClick="{{ noop }}">+ Add</button>
+          </div>
+          <input class="input" style="margin-top:12px" placeholder="Search name or number" value="{{ custQuery }}" onChange="{{ onCustQuery }}">
+          <div style="display:flex;gap:6px;margin-top:10px">
+            <sc-for list="{{ custFilters }}" as="f" hint-placeholder-count="3">
+              <button onClick="{{ f.on }}" style="cursor:pointer;font:500 12px var(--font-heading);padding:5px 11px;border-radius:20px;border:1px solid {{ f.border }};background:{{ f.bg }};color:{{ f.color }}">{{ f.label }}</button>
+            </sc-for>
+          </div>
+        </div>
+        <div style="flex:1;overflow-y:auto;padding:0 16px 20px">
+          <sc-for list="{{ custList }}" as="c" hint-placeholder-count="6">
+            <div style="display:flex;align-items:center;gap:11px;padding:11px 0;background:linear-gradient(to right,var(--color-divider),transparent) no-repeat bottom/100% 1px">
+              <button onClick="{{ c.open }}" style="flex:1;display:flex;align-items:center;gap:11px;background:transparent;border:0;padding:0;cursor:pointer;text-align:left;color:inherit;min-width:0">
+                <div style="width:38px;height:38px;flex:none;border-radius:50%;background:{{ c.avatarBg }};color:{{ c.avatarFg }};display:flex;align-items:center;justify-content:center;font:500 13px var(--font-heading)">{{ c.initials }}</div>
+                <div style="flex:1;min-width:0">
+                  <div style="display:flex;align-items:center;gap:6px"><span style="font-size:14.5px">{{ c.name }}</span><span style="font-size:10px;color:var(--color-accent)">{{ c.badge }}</span></div>
+                  <div style="font-size:11.5px;color:color-mix(in srgb,var(--color-text) 48%,transparent);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ c.meta }}</div>
+                </div>
+                <div style="text-align:right">
+                  <div style="font-size:13.5px">{{ c.spendFmt }}</div>
+                  <div style="font-size:10.5px;color:{{ c.dueColor }}">{{ c.dueLabel }}</div>
+                </div>
+              </button>
+              <button onClick="{{ c.toggleStar }}" aria-label="Star" style="background:transparent;border:0;cursor:pointer;padding:4px;color:{{ c.starColor }}">
+                <svg width="18" height="18" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5" fill="{{ c.starFill }}"><path d="M12 3.6l2.6 5.4 5.9.8-4.3 4.1 1 5.9-5.2-2.9-5.2 2.9 1-5.9L3.5 9.8l5.9-.8z"></path></svg>
+              </button>
+            </div>
+          </sc-for>
+          <div style="padding:18px 0 0;font-size:11.5px;color:color-mix(in srgb,var(--color-text) 38%,transparent)">Starred customers are your MVPs — they feed the WhatsApp segment of the same name.</div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ isCustomerDetail }}">
+        <div style="flex:1;overflow-y:auto;padding:14px 16px 24px">
+          <div style="display:flex;align-items:center;gap:10px">
+            <button class="btn btn-icon btn-secondary" onClick="{{ back }}" aria-label="Back"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M15 5l-7 7 7 7"></path></svg></button>
+            <div style="flex:1"></div>
+            <button onClick="{{ cust.toggleStar }}" aria-label="Star" style="background:transparent;border:0;cursor:pointer;padding:6px;color:{{ cust.starColor }}"><svg width="20" height="20" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5" fill="{{ cust.starFill }}"><path d="M12 3.6l2.6 5.4 5.9.8-4.3 4.1 1 5.9-5.2-2.9-5.2 2.9 1-5.9L3.5 9.8l5.9-.8z"></path></svg></button>
+          </div>
+          <div style="display:flex;align-items:center;gap:13px;margin:16px 0 4px">
+            <div style="width:56px;height:56px;flex:none;border-radius:50%;background:var(--color-accent-800);color:var(--color-accent-100);display:flex;align-items:center;justify-content:center;font:500 19px var(--font-heading)">{{ cust.initials }}</div>
+            <div>
+              <div style="font:500 21px/1.15 var(--font-heading)">{{ cust.name }}</div>
+              <div style="font-size:12.5px;color:color-mix(in srgb,var(--color-text) 50%,transparent)">+91 {{ cust.phone }}</div>
+            </div>
+          </div>
+          <div style="display:flex;gap:6px;margin:12px 0 16px">
+            <sc-for list="{{ cust.tags }}" as="t" hint-placeholder-count="2">
+              <span class="tag {{ t.cls }}">{{ t.label }}</span>
+            </sc-for>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:14px">
+            <sc-for list="{{ cust.stats }}" as="s" hint-placeholder-count="3">
+              <div style="padding:10px;border-radius:var(--radius-md);background:var(--color-surface)">
+                <div style="font-size:9.5px;letter-spacing:.09em;text-transform:uppercase;color:color-mix(in srgb,var(--color-text) 45%,transparent)">{{ s.label }}</div>
+                <div style="font:500 17px var(--font-heading);margin-top:3px">{{ s.value }}</div>
+              </div>
+            </sc-for>
+          </div>
+          <div style="padding:12px;border-radius:var(--radius-md);background:var(--color-surface);margin-bottom:14px">
+            <div style="font-size:11px;color:color-mix(in srgb,var(--color-text) 50%,transparent);margin-bottom:4px">Preferred stylist · {{ cust.stylist }}</div>
+            <div style="font-size:13px;line-height:1.5">{{ cust.note }}</div>
+          </div>
+          <div style="font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--color-accent);margin-bottom:8px">Recent visits</div>
+          <sc-for list="{{ cust.visits }}" as="v" hint-placeholder-count="3">
+            <div style="display:flex;align-items:center;gap:10px;padding:9px 0;background:linear-gradient(to right,color-mix(in srgb,var(--color-text) 8%,transparent),transparent) no-repeat bottom/100% 1px">
+              <div style="width:44px;font-size:11px;color:color-mix(in srgb,var(--color-text) 45%,transparent)">{{ v.date }}</div>
+              <div style="flex:1;font-size:13px">{{ v.what }}</div>
+              <div style="font-size:13px">{{ v.amt }}</div>
+            </div>
+          </sc-for>
+          <div style="display:flex;gap:8px;margin-top:18px">
+            <button class="btn btn-primary" style="flex:1" onClick="{{ startBillFor }}">New bill</button>
+            <button class="btn btn-secondary" style="flex:1" onClick="{{ toBooking }}">Book slot</button>
+            <button class="btn btn-secondary btn-icon" onClick="{{ toBulk }}" aria-label="WhatsApp"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 5.5h16v11H9l-5 4z"></path></svg></button>
+          </div>
+        </div>
+      </sc-if>
+
+      <!-- ── Sales ─────────────────────────────────── -->
+      <sc-if value="{{ isSales }}">
+        <div style="padding:16px 16px 6px">
+          <div style="display:flex;align-items:baseline;gap:8px">
+            <div style="font:500 22px/1.1 var(--font-heading);letter-spacing:-.02em">Sales</div>
+            <div style="font-size:12px;color:color-mix(in srgb,var(--color-text) 45%,transparent);margin-left:auto">{{ todayLabel }}</div>
+          </div>
+          <div style="display:flex;gap:0;margin-top:12px;border:1px solid var(--color-divider);border-radius:var(--radius-md);overflow:hidden">
+            <sc-for list="{{ periodTabs }}" as="p" hint-placeholder-count="3">
+              <button onClick="{{ p.on }}" style="flex:1;cursor:pointer;background:{{ p.bg }};border:0;box-shadow:{{ p.ring }};padding:8px 0;font:500 12.5px var(--font-heading);color:{{ p.color }}">{{ p.label }}</button>
+            </sc-for>
+          </div>
+        </div>
+        <div style="flex:1;overflow-y:auto;padding:8px 16px 96px">
+          <div style="display:flex;align-items:flex-end;gap:10px">
+            <div style="font:500 34px/1 var(--font-heading);letter-spacing:-.02em">{{ sales.total }}</div>
+            <div style="font-size:12px;color:{{ sales.deltaColor }};padding-bottom:4px">{{ sales.delta }}</div>
+          </div>
+          <div style="font-size:12px;color:color-mix(in srgb,var(--color-text) 48%,transparent);margin-top:4px">{{ sales.sub }}</div>
+          <div style="display:flex;align-items:flex-end;gap:6px;height:86px;margin:18px 0 4px">
+            <sc-for list="{{ sales.bars }}" as="b" hint-placeholder-count="7">
+              <div style="flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;gap:6px;height:100%">
+                <div style="width:100%;border-radius:3px 3px 0 0;background:{{ b.fill }};height:{{ b.h }}px"></div>
+                <span style="font-size:9.5px;color:color-mix(in srgb,var(--color-text) 42%,transparent)">{{ b.l }}</span>
+              </div>
+            </sc-for>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:14px 0 16px">
+            <div style="padding:11px;border-radius:var(--radius-md);background:var(--color-surface)">
+              <div style="font-size:9.5px;letter-spacing:.09em;text-transform:uppercase;color:color-mix(in srgb,var(--color-text) 45%,transparent);margin-bottom:7px">Collected via</div>
+              <sc-for list="{{ sales.modes }}" as="m" hint-placeholder-count="3">
+                <div style="display:flex;align-items:center;gap:7px;margin-bottom:5px">
+                  <div style="flex:1;font-size:12px">{{ m.label }}</div>
+                  <div style="width:52px;height:4px;border-radius:2px;background:color-mix(in srgb,var(--color-text) 12%,transparent);overflow:hidden"><div style="height:100%;background:var(--color-accent);width:{{ m.pct }}%"></div></div>
+                  <div style="font-size:11.5px;width:52px;text-align:right;color:color-mix(in srgb,var(--color-text) 70%,transparent)">{{ m.amt }}</div>
+                </div>
+              </sc-for>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:8px">
+              <div style="padding:11px;border-radius:var(--radius-md);background:var(--color-surface)">
+                <div style="font-size:9.5px;letter-spacing:.09em;text-transform:uppercase;color:color-mix(in srgb,var(--color-text) 45%,transparent)">Bills</div>
+                <div style="font:500 18px var(--font-heading);margin-top:2px">{{ sales.bills }}</div>
+                <div style="font-size:11px;color:color-mix(in srgb,var(--color-text) 45%,transparent)">avg {{ sales.avg }}</div>
+              </div>
+              <div style="padding:11px;border-radius:var(--radius-md);background:var(--color-surface)">
+                <div style="font-size:9.5px;letter-spacing:.09em;text-transform:uppercase;color:color-mix(in srgb,var(--color-text) 45%,transparent)">Top service</div>
+                <div style="font-size:13.5px;margin-top:3px">{{ sales.top }}</div>
+              </div>
+            </div>
+          </div>
+          <div style="display:flex;align-items:baseline;margin-bottom:2px">
+            <div style="font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--color-accent)">Bills</div>
+            <div style="margin-left:auto;font-size:11px;color:color-mix(in srgb,var(--color-text) 40%,transparent)">tap to view invoice</div>
+          </div>
+          <sc-for list="{{ billList }}" as="b" hint-placeholder-count="5">
+            <button onClick="{{ b.open }}" style="width:100%;display:flex;align-items:center;gap:11px;padding:11px 0;background:linear-gradient(to right,color-mix(in srgb,var(--color-text) 8%,transparent),transparent) no-repeat bottom/100% 1px;border:0;cursor:pointer;color:inherit;text-align:left">
+              <div style="width:44px;font-size:11px;color:color-mix(in srgb,var(--color-text) 45%,transparent)">{{ b.time }}</div>
+              <div style="flex:1;min-width:0">
+                <div style="font-size:14px">{{ b.cust }}</div>
+                <div style="font-size:11.5px;color:color-mix(in srgb,var(--color-text) 48%,transparent);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ b.what }} · {{ b.stylist }}</div>
+              </div>
+              <div style="text-align:right">
+                <div style="font-size:14px">{{ b.amt }}</div>
+                <div style="font-size:10px;color:color-mix(in srgb,var(--color-text) 45%,transparent)">{{ b.mode }}</div>
+              </div>
+            </button>
+          </sc-for>
+        </div>
+        <button onClick="{{ startBill }}" style="position:absolute;right:18px;bottom:96px;height:48px;padding:0 18px;border-radius:14px;background:var(--color-accent-800);border:1px solid var(--color-accent);color:var(--color-accent-100);font:500 14px var(--font-heading);display:flex;align-items:center;gap:8px;cursor:pointer;box-shadow:var(--shadow-md)" style-hover="background:var(--color-accent-700)">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 5v14M5 12h14"></path></svg>New bill
+        </button>
+      </sc-if>
+
+      <!-- ── Quick bill ────────────────────────────── -->
+      <sc-if value="{{ isBill }}">
+        <div style="display:flex;align-items:center;gap:10px;padding:14px 16px 8px">
+          <button class="btn btn-icon btn-secondary" onClick="{{ back }}" aria-label="Back"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M15 5l-7 7 7 7"></path></svg></button>
+          <div style="font:500 18px/1.2 var(--font-heading)">New bill</div>
+          <div style="margin-left:auto;font-size:11.5px;color:color-mix(in srgb,var(--color-text) 45%,transparent)">{{ cartCount }} selected</div>
+        </div>
+        <div style="flex:1;overflow-y:auto;padding:6px 16px 16px">
+          <div style="font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:color-mix(in srgb,var(--color-text) 45%,transparent);margin-bottom:7px">Customer</div>
+          <div style="display:flex;gap:6px;overflow-x:auto;padding-bottom:4px">
+            <sc-for list="{{ billCustChips }}" as="c" hint-placeholder-count="5">
+              <button onClick="{{ c.on }}" style="flex:none;cursor:pointer;font:500 12px var(--font-heading);padding:6px 11px;border-radius:20px;border:1px solid {{ c.border }};background:{{ c.bg }};color:{{ c.color }}">{{ c.label }}</button>
+            </sc-for>
+          </div>
+          <div style="font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:color-mix(in srgb,var(--color-text) 45%,transparent);margin:16px 0 7px">Services</div>
+          <sc-for list="{{ serviceGroups }}" as="g" hint-placeholder-count="4">
+            <div style="margin-bottom:12px">
+              <div style="font-size:11px;color:color-mix(in srgb,var(--color-text) 40%,transparent);margin-bottom:6px">{{ g.cat }}</div>
+              <div style="display:flex;flex-wrap:wrap;gap:6px">
+                <sc-for list="{{ g.items }}" as="s" hint-placeholder-count="4">
+                  <button onClick="{{ s.on }}" style="cursor:pointer;text-align:left;padding:7px 11px;border-radius:10px;border:1px solid {{ s.border }};background:{{ s.bg }};color:inherit">
+                    <div style="font-size:12.5px">{{ s.name }}</div>
+                    <div style="font-size:11px;color:{{ s.priceColor }}">{{ s.price }}</div>
+                  </button>
+                </sc-for>
+              </div>
+            </div>
+          </sc-for>
+          <div style="font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:color-mix(in srgb,var(--color-text) 45%,transparent);margin:6px 0 7px">Stylist</div>
+          <div style="display:flex;gap:6px;overflow-x:auto;padding-bottom:4px">
+            <sc-for list="{{ stylistChips }}" as="s" hint-placeholder-count="5">
+              <button onClick="{{ s.on }}" style="flex:none;display:flex;align-items:center;gap:7px;cursor:pointer;padding:5px 11px 5px 5px;border-radius:20px;border:1px solid {{ s.border }};background:{{ s.bg }};color:{{ s.color }};font:500 12px var(--font-heading)">
+                <span style="width:26px;height:26px;border-radius:50%;background:var(--color-accent-800);color:var(--color-accent-100);display:flex;align-items:center;justify-content:center;font-size:11px">{{ s.initials }}</span>{{ s.name }}
+              </button>
+            </sc-for>
+          </div>
+          <div style="font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:color-mix(in srgb,var(--color-text) 45%,transparent);margin:16px 0 7px">Payment</div>
+          <div style="display:flex;gap:6px">
+            <sc-for list="{{ payChips }}" as="p" hint-placeholder-count="3">
+              <button onClick="{{ p.on }}" style="flex:1;cursor:pointer;font:500 12.5px var(--font-heading);padding:8px 0;border-radius:var(--radius-md);border:1px solid {{ p.border }};background:{{ p.bg }};color:{{ p.color }}">{{ p.label }}</button>
+            </sc-for>
+          </div>
+          <sc-if value="{{ hasOffer }}">
+            <div style="display:flex;gap:8px;align-items:flex-start;margin-top:14px;padding:10px 12px;border-radius:var(--radius-md);background:var(--color-accent-900)">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--color-accent)" stroke-width="1.6" style="flex:none;margin-top:1px"><path d="M13.5 3.5H20v6.5L10 20 3.5 13.5zM16.6 7h.01"></path></svg>
+              <div style="font-size:12px;line-height:1.5;color:var(--color-accent-200)">{{ offerNote }}</div>
+            </div>
+          </sc-if>
+        </div>
+        <div style="padding:12px 16px 14px;border-top:1px solid var(--color-divider);background:color-mix(in srgb,var(--color-surface) 60%,transparent)">
+          <div style="display:flex;align-items:baseline;margin-bottom:9px">
+            <div style="font-size:12px;color:color-mix(in srgb,var(--color-text) 50%,transparent)">{{ cartSummary }}</div>
+            <div style="margin-left:auto;font:500 22px var(--font-heading)">{{ cartTotal }}</div>
+          </div>
+          <button class="btn btn-primary btn-block" onClick="{{ toInvoice }}" disabled="{{ cartEmpty }}">Bill &amp; generate invoice</button>
+        </div>
+      </sc-if>
+
+      <!-- ── Invoice ───────────────────────────────── -->
+      <sc-if value="{{ isInvoice }}">
+        <div style="display:flex;align-items:center;gap:10px;padding:14px 16px 8px">
+          <button class="btn btn-icon btn-secondary" onClick="{{ back }}" aria-label="Back"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M15 5l-7 7 7 7"></path></svg></button>
+          <div style="font:500 18px/1.2 var(--font-heading)">Invoice</div>
+          <span class="tag tag-accent" style="margin-left:auto">{{ inv.no }}</span>
+        </div>
+        <div style="flex:1;overflow-y:auto;padding:8px 16px 16px">
+          <div style="border-radius:var(--radius-lg);background:var(--color-surface);padding:16px;box-shadow:var(--shadow-sm)">
+            <div style="display:flex;justify-content:space-between;align-items:flex-start">
+              <div>
+                <div style="font:500 16px var(--font-heading)">{{ shopName }}</div>
+                <div style="font-size:11px;line-height:1.5;color:color-mix(in srgb,var(--color-text) 50%,transparent);margin-top:3px">{{ inv.addr }}<br>GSTIN {{ inv.gst }}</div>
+              </div>
+              <img src="uploads/pasted-1786980089722-0.png" alt="" style="width:44px;height:44px;border-radius:10px;object-fit:cover">
+            </div>
+            <div style="height:1px;margin:13px 0;background:linear-gradient(to right,transparent,var(--color-divider) 20px,var(--color-divider) calc(100% - 20px),transparent)"></div>
+            <div style="display:flex;justify-content:space-between;font-size:11.5px;color:color-mix(in srgb,var(--color-text) 60%,transparent)">
+              <div>Billed to<br><span style="color:var(--color-text);font-size:13px">{{ inv.cust }}</span></div>
+              <div style="text-align:right">{{ inv.date }}<br><span style="color:var(--color-text);font-size:13px">{{ inv.stylist }}</span></div>
+            </div>
+            <div style="margin-top:14px">
+              <sc-for list="{{ inv.items }}" as="i" hint-placeholder-count="3">
+                <div style="display:flex;align-items:baseline;gap:8px;padding:6px 0;background:linear-gradient(to right,color-mix(in srgb,var(--color-text) 7%,transparent),transparent) no-repeat bottom/100% 1px">
+                  <div style="flex:1;font-size:13px">{{ i.name }}</div>
+                  <div style="font-size:13px">{{ i.price }}</div>
+                </div>
+              </sc-for>
+            </div>
+            <div style="margin-top:12px;display:flex;flex-direction:column;gap:5px">
+              <sc-for list="{{ inv.totals }}" as="t" hint-placeholder-count="4">
+                <div style="display:flex;font-size:12.5px;color:{{ t.color }}">
+                  <div style="flex:1">{{ t.label }}</div><div>{{ t.value }}</div>
+                </div>
+              </sc-for>
+            </div>
+            <div style="height:1px;margin:11px 0;background:linear-gradient(to right,transparent,var(--color-divider) 20px,var(--color-divider) calc(100% - 20px),transparent)"></div>
+            <div style="display:flex;align-items:baseline">
+              <div style="font-size:12px;color:color-mix(in srgb,var(--color-text) 55%,transparent);flex:1">Paid · {{ inv.mode }}</div>
+              <div style="font:500 22px var(--font-heading)">{{ inv.total }}</div>
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;margin-top:14px">
+            <button class="btn btn-primary" style="flex:1;gap:8px" onClick="{{ sendInvoice }}">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 5.5h16v11H9l-5 4z"></path></svg>Send on WhatsApp
+            </button>
+            <button class="btn btn-secondary" onClick="{{ noop }}">PDF</button>
+            <button class="btn btn-secondary" onClick="{{ noop }}">Print</button>
+          </div>
+          <div style="margin-top:12px;font-size:11.5px;line-height:1.6;color:color-mix(in srgb,var(--color-text) 40%,transparent)">Invoice numbering, GST rate and the footer line are set once in Accounts → Shop profile.</div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ isSent }}">
+        <div style="flex:1;display:flex;flex-direction:column;padding:26px 22px 22px">
+          <div style="width:46px;height:46px;border-radius:50%;border:1px solid var(--color-accent);display:flex;align-items:center;justify-content:center;color:var(--color-accent)">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg>
+          </div>
+          <div style="font:500 23px/1.15 var(--font-heading);margin:18px 0 6px">Sent to {{ inv.cust }}</div>
+          <p style="font-size:13px;color:color-mix(in srgb,var(--color-text) 55%,transparent);margin:0 0 20px">Invoice {{ inv.no }} · {{ inv.total }} · delivered on WhatsApp</p>
+          <div style="align-self:flex-end;max-width:270px;padding:11px 13px;border-radius:14px 14px 4px 14px;background:var(--color-accent-900);font-size:12.5px;line-height:1.55;color:var(--color-accent-100)">
+            {{ waPreview }}
+          </div>
+          <div style="align-self:flex-end;font-size:10px;color:color-mix(in srgb,var(--color-text) 38%,transparent);margin-top:5px">delivered · 9:32</div>
+          <div style="margin-top:auto;display:flex;gap:8px">
+            <button class="btn btn-secondary" style="flex:1" onClick="{{ startBill }}">Next bill</button>
+            <button class="btn btn-primary" style="flex:1" onClick="{{ toSales }}">Done</button>
+          </div>
+        </div>
+      </sc-if>
+
+      <!-- ── Accounts ──────────────────────────────── -->
+      <sc-if value="{{ isAccounts }}">
+        <div style="padding:16px 16px 6px">
+          <div style="display:flex;align-items:baseline;gap:8px">
+            <div style="font:500 22px/1.1 var(--font-heading);letter-spacing:-.02em">Accounts</div>
+            <div style="font-size:12px;color:color-mix(in srgb,var(--color-text) 45%,transparent);margin-left:auto">{{ todayLabel }}</div>
+          </div>
+          <div style="display:flex;margin-top:12px;border:1px solid var(--color-divider);border-radius:var(--radius-md);overflow:hidden">
+            <sc-for list="{{ periodTabs }}" as="p" hint-placeholder-count="3">
+              <button onClick="{{ p.on }}" style="flex:1;cursor:pointer;background:{{ p.bg }};border:0;box-shadow:{{ p.ring }};padding:8px 0;font:500 12.5px var(--font-heading);color:{{ p.color }}">{{ p.label }}</button>
+            </sc-for>
+          </div>
+        </div>
+        <div style="flex:1;overflow-y:auto;padding:10px 16px 24px">
+          <div style="display:flex;align-items:flex-end;gap:10px">
+            <div>
+              <div style="font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--color-accent)">Net profit</div>
+              <div style="font:500 34px/1.05 var(--font-heading);letter-spacing:-.02em;margin-top:4px">{{ pnl.net }}</div>
+            </div>
+            <div style="padding-bottom:5px;font-size:12px;color:color-mix(in srgb,var(--color-text) 55%,transparent)">{{ pnl.margin }} margin</div>
+          </div>
+          <div style="display:flex;gap:16px;margin-top:10px;font-size:12px">
+            <div style="display:flex;align-items:center;gap:6px"><span style="width:9px;height:9px;border-radius:2px;background:var(--color-accent)"></span>Income {{ pnl.income }}</div>
+            <div style="display:flex;align-items:center;gap:6px"><span style="width:9px;height:9px;border-radius:2px;background:var(--color-neutral-700)"></span>Expenses {{ pnl.expense }}</div>
+          </div>
+          <div style="display:flex;align-items:flex-end;gap:9px;height:104px;margin:16px 0 4px">
+            <sc-for list="{{ pnl.groups }}" as="g" hint-placeholder-count="6">
+              <div style="flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;gap:6px;height:100%">
+                <div style="display:flex;align-items:flex-end;gap:3px;width:100%;height:100%">
+                  <div style="flex:1;border-radius:3px 3px 0 0;background:var(--color-accent);height:{{ g.hIn }}px"></div>
+                  <div style="flex:1;border-radius:3px 3px 0 0;background:var(--color-neutral-700);height:{{ g.hEx }}px"></div>
+                </div>
+                <span style="font-size:9.5px;color:color-mix(in srgb,var(--color-text) 42%,transparent)">{{ g.l }}</span>
+              </div>
+            </sc-for>
+          </div>
+          <div style="padding:12px;border-radius:var(--radius-md);background:var(--color-surface);margin:14px 0">
+            <div style="font-size:9.5px;letter-spacing:.09em;text-transform:uppercase;color:color-mix(in srgb,var(--color-text) 45%,transparent);margin-bottom:9px">Where the money went</div>
+            <sc-for list="{{ pnl.cats }}" as="c" hint-placeholder-count="5">
+              <div style="margin-bottom:9px">
+                <div style="display:flex;font-size:12.5px;margin-bottom:4px"><div style="flex:1">{{ c.label }}</div><div style="color:color-mix(in srgb,var(--color-text) 70%,transparent)">{{ c.amt }}</div></div>
+                <div style="height:4px;border-radius:2px;background:color-mix(in srgb,var(--color-text) 10%,transparent);overflow:hidden"><div style="height:100%;background:{{ c.fill }};width:{{ c.pct }}%"></div></div>
+              </div>
+            </sc-for>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center;padding:12px;border-radius:var(--radius-md);background:var(--color-accent-900);margin-bottom:16px">
+            <div style="flex:1">
+              <div style="font-size:12px;color:var(--color-accent-200)">Outstanding from customers</div>
+              <div style="font:500 19px var(--font-heading);color:var(--color-accent-100);margin-top:2px">{{ pnl.dues }}</div>
+            </div>
+            <button class="btn btn-primary" onClick="{{ toReminders }}">Chase</button>
+          </div>
+          <div style="font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:color-mix(in srgb,var(--color-text) 45%,transparent);margin-bottom:8px">Manage</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+            <sc-for list="{{ tools }}" as="t" hint-placeholder-count="7">
+              <button onClick="{{ t.on }}" style="display:flex;flex-direction:column;gap:7px;align-items:flex-start;text-align:left;padding:12px;border-radius:var(--radius-md);background:var(--color-surface);border:1px solid transparent;cursor:pointer;color:inherit" style-hover="border-color:var(--color-accent)">
+                <div style="display:flex;align-items:center;gap:6px;width:100%">
+                  <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="var(--color-accent)" stroke-width="1.55"><path d="{{ t.d }}"></path></svg>
+                  <sc-if value="{{ t.badge }}"><span class="tag tag-accent" style="margin-left:auto">{{ t.badge }}</span></sc-if>
+                </div>
+                <div>
+                  <div style="font:500 13.5px var(--font-heading)">{{ t.label }}</div>
+                  <div style="font-size:11px;color:color-mix(in srgb,var(--color-text) 45%,transparent);margin-top:2px">{{ t.sub }}</div>
+                </div>
+              </button>
+            </sc-for>
+          </div>
+        </div>
+      </sc-if>
+
+      <!-- ── Expenses ──────────────────────────────── -->
+      <sc-if value="{{ isExpenses }}">
+        <div style="padding:14px 16px 6px">
+          <div style="display:flex;align-items:center;gap:10px">
+            <button class="btn btn-icon btn-secondary" onClick="{{ back }}" aria-label="Back"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M15 5l-7 7 7 7"></path></svg></button>
+            <div style="font:500 18px/1.2 var(--font-heading)">Expenses</div>
+          </div>
+          <div style="display:flex;margin-top:12px;border:1px solid var(--color-divider);border-radius:var(--radius-md);overflow:hidden">
+            <sc-for list="{{ periodTabs }}" as="p" hint-placeholder-count="3">
+              <button onClick="{{ p.on }}" style="flex:1;cursor:pointer;background:{{ p.bg }};border:0;box-shadow:{{ p.ring }};padding:8px 0;font:500 12.5px var(--font-heading);color:{{ p.color }}">{{ p.label }}</button>
+            </sc-for>
+          </div>
+        </div>
+        <div style="flex:1;overflow-y:auto;padding:10px 16px 20px">
+          <div style="display:flex;align-items:flex-end;gap:10px;margin-bottom:14px">
+            <div style="font:500 30px/1 var(--font-heading);letter-spacing:-.02em">{{ pnl.expense }}</div>
+            <div style="font-size:12px;color:color-mix(in srgb,var(--color-text) 50%,transparent);padding-bottom:3px">{{ expenseCount }} entries</div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <sc-for list="{{ expenseList }}" as="e" hint-placeholder-count="6">
+              <div style="display:flex;align-items:center;gap:10px;padding:11px 12px;border-radius:var(--radius-md);background:var(--color-surface)">
+                <div style="flex:1;min-width:0">
+                  <div style="font-size:13.5px">{{ e.note }}</div>
+                  <div style="display:flex;gap:6px;align-items:center;margin-top:4px">
+                    <span class="tag tag-neutral">{{ e.cat }}</span>
+                    <span style="font-size:11px;color:color-mix(in srgb,var(--color-text) 45%,transparent)">{{ e.when }} · {{ e.mode }}</span>
+                  </div>
+                </div>
+                <div style="font-size:14px">{{ e.amt }}</div>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+        <div style="padding:10px 16px 14px;border-top:1px solid var(--color-divider)">
+          <button class="btn btn-primary btn-block" onClick="{{ openAddExpense }}">+ Add expense</button>
+        </div>
+        <sc-if value="{{ addExpenseOpen }}">
+          <div style="position:absolute;inset:0;display:flex;flex-direction:column;justify-content:flex-end;background:color-mix(in srgb,var(--color-neutral-900) 62%,transparent)">
+            <div style="background:var(--color-surface);border-radius:var(--radius-lg) var(--radius-lg) 0 0;padding:16px;box-shadow:var(--shadow-lg)">
+              <div style="display:flex;align-items:center;margin-bottom:14px">
+                <div style="font:500 17px var(--font-heading);flex:1">Add expense</div>
+                <button onClick="{{ closeSheet }}" aria-label="Close" style="background:transparent;border:0;cursor:pointer;color:color-mix(in srgb,var(--color-text) 50%,transparent)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M6 6l12 12M18 6L6 18"></path></svg></button>
+              </div>
+              <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px">
+                <sc-for list="{{ expCatChips }}" as="c" hint-placeholder-count="6">
+                  <button onClick="{{ c.on }}" style="cursor:pointer;font:500 12px var(--font-heading);padding:6px 11px;border-radius:20px;border:1px solid {{ c.border }};background:{{ c.bg }};color:{{ c.color }}">{{ c.label }}</button>
+                </sc-for>
+              </div>
+              <div style="display:flex;gap:10px;margin-bottom:12px">
+                <div class="field" style="width:120px"><label>Amount ₹</label><input class="input" inputmode="numeric" value="{{ expAmount }}" onChange="{{ onExpAmount }}" placeholder="0"></div>
+                <div class="field" style="flex:1"><label>Note</label><input class="input" value="{{ expNote }}" onChange="{{ onExpNote }}" placeholder="Wella colour restock"></div>
+              </div>
+              <button class="btn btn-primary btn-block" onClick="{{ saveExpense }}">Save expense</button>
+            </div>
+          </div>
+        </sc-if>
+      </sc-if>
+
+      <!-- ── Appointments ──────────────────────────── -->
+      <sc-if value="{{ isAppointments }}">
+        <div style="padding:14px 16px 8px">
+          <div style="display:flex;align-items:center;gap:10px">
+            <button class="btn btn-icon btn-secondary" onClick="{{ back }}" aria-label="Back"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M15 5l-7 7 7 7"></path></svg></button>
+            <div style="font:500 18px/1.2 var(--font-heading)">Appointments</div>
+          </div>
+          <div style="display:flex;gap:6px;margin-top:12px;overflow-x:auto;padding-bottom:4px">
+            <sc-for list="{{ dayChips }}" as="d" hint-placeholder-count="7">
+              <button onClick="{{ d.on }}" style="flex:none;width:44px;padding:7px 0;border-radius:12px;cursor:pointer;border:1px solid {{ d.border }};background:{{ d.bg }};color:{{ d.color }};text-align:center">
+                <div style="font-size:10px;opacity:.7">{{ d.dow }}</div>
+                <div style="font:500 15px var(--font-heading);margin-top:2px">{{ d.date }}</div>
+                <div style="font-size:9px;opacity:.7">{{ d.count }}</div>
+              </button>
+            </sc-for>
+          </div>
+        </div>
+        <div style="flex:1;overflow-y:auto;padding:8px 16px 90px">
+          <div style="font-size:12px;color:color-mix(in srgb,var(--color-text) 50%,transparent);margin-bottom:12px">{{ apptSummary }}</div>
+          <sc-for list="{{ apptList }}" as="a" hint-placeholder-count="6">
+            <div style="display:flex;gap:11px;margin-bottom:10px">
+              <div style="width:52px;flex:none;text-align:right;padding-top:11px">
+                <div style="font:500 13px var(--font-heading)">{{ a.time }}</div>
+                <div style="font-size:10px;color:color-mix(in srgb,var(--color-text) 40%,transparent)">{{ a.dur }}</div>
+              </div>
+              <div style="width:2px;flex:none;border-radius:1px;background:{{ a.rail }}"></div>
+              <div style="flex:1;padding:11px 12px;border-radius:var(--radius-md);background:var(--color-surface);min-width:0">
+                <div style="display:flex;align-items:center;gap:8px">
+                  <div style="flex:1;font-size:14px;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ a.cust }}</div>
+                  <span class="tag {{ a.statusCls }}">{{ a.status }}</span>
+                </div>
+                <div style="font-size:11.5px;color:color-mix(in srgb,var(--color-text) 48%,transparent);margin-top:3px">{{ a.service }} · {{ a.stylist }} · {{ a.amt }}</div>
+                <div style="display:flex;gap:6px;margin-top:9px">
+                  <button class="btn btn-secondary" style="font-size:12px;padding:4px 9px" onClick="{{ a.advance }}">{{ a.nextAction }}</button>
+                  <button class="btn btn-ghost" style="font-size:12px" onClick="{{ a.remind }}">{{ a.remindLabel }}</button>
+                </div>
+              </div>
+            </div>
+          </sc-for>
+        </div>
+        <button onClick="{{ toBooking }}" style="position:absolute;right:18px;bottom:34px;height:48px;padding:0 18px;border-radius:14px;background:var(--color-accent-800);border:1px solid var(--color-accent);color:var(--color-accent-100);font:500 14px var(--font-heading);display:flex;align-items:center;gap:8px;cursor:pointer;box-shadow:var(--shadow-md)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 5v14M5 12h14"></path></svg>Book</button>
+      </sc-if>
+
+      <sc-if value="{{ isBooking }}">
+        <div style="display:flex;align-items:center;gap:10px;padding:14px 16px 8px">
+          <button class="btn btn-icon btn-secondary" onClick="{{ back }}" aria-label="Back"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M15 5l-7 7 7 7"></path></svg></button>
+          <div style="font:500 18px/1.2 var(--font-heading)">New appointment</div>
+        </div>
+        <div style="flex:1;overflow-y:auto;padding:8px 16px 16px">
+          <div style="font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:color-mix(in srgb,var(--color-text) 45%,transparent);margin-bottom:7px">Customer</div>
+          <div style="display:flex;gap:6px;overflow-x:auto;padding-bottom:4px">
+            <sc-for list="{{ billCustChips }}" as="c" hint-placeholder-count="5">
+              <button onClick="{{ c.on }}" style="flex:none;cursor:pointer;font:500 12px var(--font-heading);padding:6px 11px;border-radius:20px;border:1px solid {{ c.border }};background:{{ c.bg }};color:{{ c.color }}">{{ c.label }}</button>
+            </sc-for>
+          </div>
+          <div style="font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:color-mix(in srgb,var(--color-text) 45%,transparent);margin:16px 0 7px">Service</div>
+          <div style="display:flex;flex-wrap:wrap;gap:6px">
+            <sc-for list="{{ topServiceChips }}" as="s" hint-placeholder-count="6">
+              <button onClick="{{ s.on }}" style="cursor:pointer;font-size:12.5px;padding:7px 11px;border-radius:10px;border:1px solid {{ s.border }};background:{{ s.bg }};color:inherit">{{ s.name }} <span style="color:{{ s.priceColor }}">{{ s.price }}</span></button>
+            </sc-for>
+          </div>
+          <div style="font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:color-mix(in srgb,var(--color-text) 45%,transparent);margin:16px 0 7px">Stylist</div>
+          <div style="display:flex;gap:6px;overflow-x:auto;padding-bottom:4px">
+            <sc-for list="{{ stylistChips }}" as="s" hint-placeholder-count="5">
+              <button onClick="{{ s.on }}" style="flex:none;cursor:pointer;padding:6px 12px;border-radius:20px;border:1px solid {{ s.border }};background:{{ s.bg }};color:{{ s.color }};font:500 12px var(--font-heading)">{{ s.name }}</button>
+            </sc-for>
+          </div>
+          <div style="font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:color-mix(in srgb,var(--color-text) 45%,transparent);margin:16px 0 7px">Slot · {{ bookDayLabel }}</div>
+          <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px">
+            <sc-for list="{{ slotChips }}" as="s" hint-placeholder-count="12">
+              <button onClick="{{ s.on }}" disabled="{{ s.taken }}" style="cursor:{{ s.cursor }};font:500 12px var(--font-heading);padding:8px 0;border-radius:8px;border:1px solid {{ s.border }};background:{{ s.bg }};color:{{ s.color }}">{{ s.label }}</button>
+            </sc-for>
+          </div>
+          <label class="radio" style="margin-top:16px;align-items:flex-start">
+            <input type="checkbox" checked="{{ sendConfirm }}" onChange="{{ toggleConfirm }}">
+            <span class="dot" style="border-radius:4px;margin-top:2px"></span>
+            <span style="font-size:12.5px;line-height:1.5;color:color-mix(in srgb,var(--color-text) 70%,transparent)">Send WhatsApp confirmation now, and a reminder 3 hours before</span>
+          </label>
+        </div>
+        <div style="padding:12px 16px 14px;border-top:1px solid var(--color-divider)">
+          <button class="btn btn-primary btn-block" onClick="{{ confirmBooking }}" disabled="{{ bookIncomplete }}">{{ bookCta }}</button>
+        </div>
+      </sc-if>
+
+      <!-- ── Reminders ─────────────────────────────── -->
+      <sc-if value="{{ isReminders }}">
+        <div style="display:flex;align-items:center;gap:10px;padding:14px 16px 8px">
+          <button class="btn btn-icon btn-secondary" onClick="{{ back }}" aria-label="Back"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M15 5l-7 7 7 7"></path></svg></button>
+          <div style="font:500 18px/1.2 var(--font-heading)">Reminders</div>
+          <div style="margin-left:auto;font-size:11.5px;color:color-mix(in srgb,var(--color-text) 45%,transparent)">{{ reminderCount }} open</div>
+        </div>
+        <div style="flex:1;overflow-y:auto;padding:8px 16px 20px">
+          <sc-for list="{{ reminderGroups }}" as="g" hint-placeholder-count="2">
+            <div style="margin-bottom:16px">
+              <div style="font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--color-accent);margin-bottom:8px">{{ g.label }}</div>
+              <div style="display:flex;flex-direction:column;gap:8px">
+                <sc-for list="{{ g.items }}" as="r" hint-placeholder-count="3">
+                  <div style="display:flex;gap:11px;padding:12px;border-radius:var(--radius-md);background:var(--color-surface)">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--color-accent)" stroke-width="1.55" style="flex:none;margin-top:1px"><path d="{{ r.d }}"></path></svg>
+                    <div style="flex:1;min-width:0">
+                      <div style="font-size:13.5px">{{ r.title }}</div>
+                      <div style="font-size:11.5px;color:color-mix(in srgb,var(--color-text) 48%,transparent);margin-top:2px">{{ r.sub }}</div>
+                      <div style="display:flex;gap:6px;margin-top:9px">
+                        <button class="btn btn-secondary" style="font-size:12px;padding:4px 9px" onClick="{{ r.act }}">{{ r.action }}</button>
+                        <button class="btn btn-ghost" style="font-size:12px" onClick="{{ r.done }}">Dismiss</button>
+                      </div>
+                    </div>
+                    <div style="font-size:10.5px;color:color-mix(in srgb,var(--color-text) 40%,transparent)">{{ r.when }}</div>
+                  </div>
+                </sc-for>
+              </div>
+            </div>
+          </sc-for>
+          <sc-if value="{{ remindersEmpty }}">
+            <div style="padding:30px 0;text-align:center;font-size:13px;color:color-mix(in srgb,var(--color-text) 42%,transparent)">Everything's cleared for today.</div>
+          </sc-if>
+          <div style="padding:12px;border-radius:var(--radius-md);background:var(--color-surface)">
+            <div style="font-size:12.5px;margin-bottom:9px">Automatic reminders</div>
+            <sc-for list="{{ reminderRules }}" as="r" hint-placeholder-count="3">
+              <div style="display:flex;align-items:center;gap:9px;padding:6px 0">
+                <div style="flex:1;font-size:12.5px;color:color-mix(in srgb,var(--color-text) 72%,transparent)">{{ r.label }}</div>
+                <button onClick="{{ r.toggle }}" aria-label="Toggle" style="width:38px;height:22px;border-radius:11px;border:1px solid {{ r.border }};background:{{ r.track }};position:relative;cursor:pointer">
+                  <span style="position:absolute;top:2px;left:{{ r.knob }}px;width:16px;height:16px;border-radius:50%;background:{{ r.knobBg }}"></span>
+                </button>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+      </sc-if>
+
+      <!-- ── Bulk WhatsApp ─────────────────────────── -->
+      <sc-if value="{{ isBulk }}">
+        <div style="display:flex;align-items:center;gap:10px;padding:14px 16px 8px">
+          <button class="btn btn-icon btn-secondary" onClick="{{ back }}" aria-label="Back"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M15 5l-7 7 7 7"></path></svg></button>
+          <div style="font:500 18px/1.2 var(--font-heading)">Bulk WhatsApp</div>
+        </div>
+        <div style="flex:1;overflow-y:auto;padding:8px 16px 16px">
+          <div style="font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:color-mix(in srgb,var(--color-text) 45%,transparent);margin-bottom:8px">Who gets it</div>
+          <div style="display:flex;flex-direction:column;gap:7px">
+            <sc-for list="{{ audiences }}" as="a" hint-placeholder-count="4">
+              <button onClick="{{ a.on }}" style="display:flex;align-items:center;gap:10px;padding:11px 12px;border-radius:var(--radius-md);background:{{ a.bg }};border:1px solid {{ a.border }};cursor:pointer;color:inherit;text-align:left">
+                <span style="width:16px;height:16px;flex:none;border-radius:50%;border:1.5px solid {{ a.dotBorder }};background:{{ a.dotBg }};box-shadow:{{ a.dotRing }}"></span>
+                <span style="flex:1;font-size:13.5px">{{ a.label }}</span>
+                <span style="font-size:12px;color:color-mix(in srgb,var(--color-text) 50%,transparent)">{{ a.count }}</span>
+              </button>
+            </sc-for>
+          </div>
+          <div style="font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:color-mix(in srgb,var(--color-text) 45%,transparent);margin:16px 0 8px">Message</div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:9px">
+            <sc-for list="{{ templates }}" as="t" hint-placeholder-count="3">
+              <button onClick="{{ t.on }}" style="cursor:pointer;font:500 12px var(--font-heading);padding:5px 11px;border-radius:20px;border:1px solid {{ t.border }};background:{{ t.bg }};color:{{ t.color }}">{{ t.label }}</button>
+            </sc-for>
+          </div>
+          <textarea class="input" style="min-height:96px;font-size:13px;line-height:1.55" value="{{ msg }}" onChange="{{ onMsg }}"></textarea>
+          <div style="font-size:11px;color:color-mix(in srgb,var(--color-text) 42%,transparent);margin-top:6px">Tap to insert · [name] [shop] [offer] — filled per customer when sending.</div>
+          <div style="font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:color-mix(in srgb,var(--color-text) 45%,transparent);margin:16px 0 8px">Preview</div>
+          <div style="padding:12px;border-radius:var(--radius-md);background:var(--color-surface)">
+            <div style="max-width:250px;padding:10px 12px;border-radius:14px 14px 14px 4px;background:var(--color-accent-900);font-size:12.5px;line-height:1.55;color:var(--color-accent-100);white-space:pre-wrap">{{ msgPreview }}</div>
+            <div style="font-size:10px;color:color-mix(in srgb,var(--color-text) 38%,transparent);margin-top:5px">as {{ previewName }} will see it</div>
+          </div>
+        </div>
+        <div style="padding:12px 16px 14px;border-top:1px solid var(--color-divider)">
+          <div style="font-size:11.5px;color:color-mix(in srgb,var(--color-text) 45%,transparent);margin-bottom:8px">Sends in batches of 40 · about {{ sendMinutes }} minutes</div>
+          <button class="btn btn-primary btn-block" onClick="{{ sendBulk }}">Send to {{ audienceCount }} customers</button>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ isBulkSent }}">
+        <div style="flex:1;display:flex;flex-direction:column;padding:26px 22px 22px">
+          <div style="width:46px;height:46px;border-radius:50%;border:1px solid var(--color-accent);display:flex;align-items:center;justify-content:center;color:var(--color-accent)"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg></div>
+          <div style="font:500 23px/1.15 var(--font-heading);margin:18px 0 6px">Queued for {{ audienceCount }}</div>
+          <p style="font-size:13px;color:color-mix(in srgb,var(--color-text) 55%,transparent);margin:0 0 18px">{{ audienceLabel }} · sending now. You'll see delivery counts here as they land.</p>
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">
+            <sc-for list="{{ bulkStats }}" as="s" hint-placeholder-count="3">
+              <div style="padding:11px;border-radius:var(--radius-md);background:var(--color-surface)">
+                <div style="font-size:9.5px;letter-spacing:.09em;text-transform:uppercase;color:color-mix(in srgb,var(--color-text) 45%,transparent)">{{ s.label }}</div>
+                <div style="font:500 18px var(--font-heading);margin-top:3px">{{ s.value }}</div>
+              </div>
+            </sc-for>
+          </div>
+          <div style="margin-top:auto;display:flex;gap:8px">
+            <button class="btn btn-secondary" style="flex:1" onClick="{{ toBulk }}">New campaign</button>
+            <button class="btn btn-primary" style="flex:1" onClick="{{ toAccounts }}">Done</button>
+          </div>
+        </div>
+      </sc-if>
+
+      <!-- ── Staff ─────────────────────────────────── -->
+      <sc-if value="{{ isStaff }}">
+        <div style="padding:14px 16px 6px">
+          <div style="display:flex;align-items:center;gap:10px">
+            <button class="btn btn-icon btn-secondary" onClick="{{ back }}" aria-label="Back"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M15 5l-7 7 7 7"></path></svg></button>
+            <div style="font:500 18px/1.2 var(--font-heading)">Team</div>
+            <button class="btn btn-ghost" style="margin-left:auto;font-size:13px" onClick="{{ toWorkers }}">Manage</button>
+          </div>
+          <div style="display:flex;margin-top:12px;border:1px solid var(--color-divider);border-radius:var(--radius-md);overflow:hidden">
+            <sc-for list="{{ periodTabs }}" as="p" hint-placeholder-count="3">
+              <button onClick="{{ p.on }}" style="flex:1;cursor:pointer;background:{{ p.bg }};border:0;box-shadow:{{ p.ring }};padding:8px 0;font:500 12.5px var(--font-heading);color:{{ p.color }}">{{ p.label }}</button>
+            </sc-for>
+          </div>
+        </div>
+        <div style="flex:1;overflow-y:auto;padding:10px 16px 20px">
+          <div style="font-size:12px;color:color-mix(in srgb,var(--color-text) 50%,transparent);margin-bottom:12px">{{ staffSummary }}</div>
+          <div style="display:flex;flex-direction:column;gap:9px">
+            <sc-for list="{{ staffCards }}" as="s" hint-placeholder-count="5">
+              <div style="padding:12px;border-radius:var(--radius-md);background:var(--color-surface)">
+                <div style="display:flex;align-items:center;gap:10px">
+                  <div style="width:36px;height:36px;flex:none;border-radius:50%;background:var(--color-accent-800);color:var(--color-accent-100);display:flex;align-items:center;justify-content:center;font:500 13px var(--font-heading)">{{ s.initials }}</div>
+                  <div style="flex:1;min-width:0">
+                    <div style="display:flex;align-items:center;gap:6px"><span style="font-size:14.5px">{{ s.name }}</span><span class="tag tag-accent" style="display:{{ s.topDisplay }}">Top</span></div>
+                    <div style="font-size:11.5px;color:color-mix(in srgb,var(--color-text) 48%,transparent)">{{ s.role }}</div>
+                  </div>
+                  <div style="text-align:right">
+                    <div style="font:500 15px var(--font-heading)">{{ s.revenue }}</div>
+                    <div style="font-size:10.5px;color:color-mix(in srgb,var(--color-text) 45%,transparent)">{{ s.jobs }} services</div>
+                  </div>
+                </div>
+                <div style="margin-top:11px">
+                  <div style="display:flex;font-size:11px;color:color-mix(in srgb,var(--color-text) 50%,transparent);margin-bottom:4px"><div style="flex:1">Target {{ s.target }}</div><div>{{ s.pct }}%</div></div>
+                  <div style="height:5px;border-radius:3px;background:color-mix(in srgb,var(--color-text) 10%,transparent);overflow:hidden"><div style="height:100%;background:{{ s.barFill }};width:{{ s.pctClamped }}%"></div></div>
+                </div>
+                <div style="display:flex;gap:14px;margin-top:10px;font-size:11.5px;color:color-mix(in srgb,var(--color-text) 55%,transparent)">
+                  <div>Rebook {{ s.rebook }}</div>
+                  <div>Rating {{ s.rating }}</div>
+                  <div>Chair time {{ s.util }}</div>
+                </div>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+      </sc-if>
+
+      <!-- ── Price & offers ────────────────────────── -->
+      <sc-if value="{{ isPricing }}">
+        <div style="display:flex;align-items:center;gap:10px;padding:14px 16px 8px">
+          <button class="btn btn-icon btn-secondary" onClick="{{ back }}" aria-label="Back"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M15 5l-7 7 7 7"></path></svg></button>
+          <div style="font:500 18px/1.2 var(--font-heading)">Price &amp; offers</div>
+          <div style="margin-left:auto;font-size:11.5px;color:color-mix(in srgb,var(--color-text) 45%,transparent)">{{ serviceCount }} services</div>
+        </div>
+        <div style="flex:1;overflow-y:auto;padding:8px 16px 20px">
+          <sc-for list="{{ serviceGroups }}" as="g" hint-placeholder-count="5">
+            <div style="margin-bottom:14px">
+              <div style="font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--color-accent);margin-bottom:6px">{{ g.cat }}</div>
+              <sc-for list="{{ g.items }}" as="s" hint-placeholder-count="4">
+                <div style="display:flex;align-items:center;gap:10px;padding:10px 0;background:linear-gradient(to right,color-mix(in srgb,var(--color-text) 8%,transparent),transparent) no-repeat bottom/100% 1px">
+                  <div style="flex:1;font-size:13.5px">{{ s.name }}</div>
+                  <div style="font-size:13.5px;color:color-mix(in srgb,var(--color-text) 75%,transparent)">{{ s.price }}</div>
+                  <button onClick="{{ s.remove }}" aria-label="Delete" style="background:transparent;border:0;cursor:pointer;color:color-mix(in srgb,var(--color-text) 40%,transparent);padding:3px"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M5 7h14M9 7V4.5h6V7M7 7l1 13h8l1-13"></path></svg></button>
+                </div>
+              </sc-for>
+            </div>
+          </sc-for>
+          <div style="padding:12px;border-radius:var(--radius-md);background:var(--color-surface);margin-bottom:16px">
+            <div style="font-size:12.5px;margin-bottom:10px">Add a service</div>
+            <div style="display:flex;gap:8px;margin-bottom:9px">
+              <input class="input" placeholder="Service name" value="{{ newSvcName }}" onChange="{{ onNewSvcName }}">
+              <input class="input" style="width:88px" inputmode="numeric" placeholder="₹" value="{{ newSvcPrice }}" onChange="{{ onNewSvcPrice }}">
+            </div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">
+              <sc-for list="{{ svcCatChips }}" as="c" hint-placeholder-count="5">
+                <button onClick="{{ c.on }}" style="cursor:pointer;font:500 12px var(--font-heading);padding:5px 10px;border-radius:20px;border:1px solid {{ c.border }};background:{{ c.bg }};color:{{ c.color }}">{{ c.label }}</button>
+              </sc-for>
+            </div>
+            <button class="btn btn-secondary btn-block" onClick="{{ addService }}">Add to price list</button>
+          </div>
+          <div style="font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--color-accent);margin-bottom:8px">Offers</div>
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <sc-for list="{{ offerList }}" as="o" hint-placeholder-count="3">
+              <div style="display:flex;align-items:center;gap:10px;padding:12px;border-radius:var(--radius-md);background:var(--color-surface)">
+                <div style="flex:1;min-width:0">
+                  <div style="font-size:13.5px">{{ o.name }}</div>
+                  <div style="font-size:11.5px;color:color-mix(in srgb,var(--color-text) 48%,transparent);margin-top:2px">{{ o.detail }}</div>
+                </div>
+                <button onClick="{{ o.toggle }}" aria-label="Toggle" style="width:38px;height:22px;flex:none;border-radius:11px;border:1px solid {{ o.border }};background:{{ o.track }};position:relative;cursor:pointer">
+                  <span style="position:absolute;top:2px;left:{{ o.knob }}px;width:16px;height:16px;border-radius:50%;background:{{ o.knobBg }}"></span>
+                </button>
+                <button onClick="{{ o.remove }}" aria-label="Delete" style="background:transparent;border:0;cursor:pointer;color:color-mix(in srgb,var(--color-text) 40%,transparent);padding:3px"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M5 7h14M9 7V4.5h6V7M7 7l1 13h8l1-13"></path></svg></button>
+              </div>
+            </sc-for>
+          </div>
+          <button class="btn btn-primary btn-block" style="margin-top:12px" onClick="{{ addOffer }}">+ Create offer</button>
+        </div>
+      </sc-if>
+
+      <!-- ── Shop profile ──────────────────────────── -->
+      <sc-if value="{{ isProfile }}">
+        <div style="display:flex;align-items:center;gap:10px;padding:14px 16px 8px">
+          <button class="btn btn-icon btn-secondary" onClick="{{ back }}" aria-label="Back"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M15 5l-7 7 7 7"></path></svg></button>
+          <div style="font:500 18px/1.2 var(--font-heading)">Shop profile</div>
+        </div>
+        <div style="flex:1;overflow-y:auto;padding:8px 16px 20px">
+          <div style="display:flex;gap:12px;align-items:center;padding:12px;border-radius:var(--radius-md);background:var(--color-surface);margin-bottom:14px">
+            <img src="uploads/pasted-1786980089722-0.png" alt="" style="width:56px;height:56px;flex:none;border-radius:13px;object-fit:cover;border:1px solid color-mix(in srgb,var(--color-accent) 35%,transparent)">
+            <div style="min-width:0">
+              <div style="font:500 16px var(--font-heading)">{{ shopName }}</div>
+              <div style="font-size:11.5px;color:color-mix(in srgb,var(--color-text) 50%,transparent);margin-top:2px">{{ reg.addr }}, {{ reg.city }} {{ reg.pin }}</div>
+            </div>
+          </div>
+          <div style="font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--color-accent);margin-bottom:8px">Theme from logo</div>
+          <div style="padding:12px;border-radius:var(--radius-md);background:var(--color-surface);margin-bottom:16px">
+            <div style="font-size:12px;line-height:1.5;color:color-mix(in srgb,var(--color-text) 60%,transparent);margin-bottom:10px">We pull the dominant colours out of your logo. Pick the one that should carry buttons, charts and highlights.</div>
+            <div style="display:flex;gap:9px">
+              <sc-for list="{{ accentSwatches }}" as="a" hint-placeholder-count="4">
+                <button onClick="{{ a.on }}" aria-label="Accent" style="width:44px;height:44px;border-radius:11px;cursor:pointer;border:2px solid {{ a.ring }};background:{{ a.color }}"></button>
+              </sc-for>
+            </div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:16px">
+            <sc-for list="{{ profileRows }}" as="r" hint-placeholder-count="5">
+              <div style="display:flex;align-items:center;gap:10px;padding:11px 12px;border-radius:var(--radius-md);background:var(--color-surface)">
+                <div style="flex:1;font-size:13px;color:color-mix(in srgb,var(--color-text) 65%,transparent)">{{ r.label }}</div>
+                <div style="font-size:13px">{{ r.value }}</div>
+              </div>
+            </sc-for>
+          </div>
+          <button class="btn btn-secondary btn-block" onClick="{{ signOut }}">Sign out</button>
+        </div>
+      </sc-if>
+
+      <!-- ── Tab bar ───────────────────────────────── -->
+      <sc-if value="{{ inApp }}">
+        <div style="display:flex;border-top:1px solid var(--color-divider);background:color-mix(in srgb,var(--color-surface) 88%,transparent)">
+          <sc-for list="{{ tabs }}" as="t" hint-placeholder-count="3">
+            <button onClick="{{ t.on }}" style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;padding:10px 0 12px;background:transparent;border:0;border-top:2px solid {{ t.line }};cursor:pointer;font:500 10.5px var(--font-heading);letter-spacing:.04em;color:{{ t.color }}">
+              <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="{{ t.d }}"></path></svg>
+              {{ t.label }}
+            </button>
+          </sc-for>
+        </div>
+      </sc-if>
+
+    </div>
+  </x-import>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;accent&quot;:{&quot;editor&quot;:&quot;color&quot;,&quot;default&quot;:&quot;#d9a441&quot;,&quot;options&quot;:[&quot;#d9a441&quot;,&quot;#e0c068&quot;,&quot;#b8863b&quot;,&quot;#8c6239&quot;],&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Theme&quot;},&quot;shopName&quot;:{&quot;editor&quot;:&quot;text&quot;,&quot;default&quot;:&quot;Brave &amp; Cave Mens Salon&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Theme&quot;},&quot;startScreen&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;Onboarding&quot;,&quot;Customers&quot;,&quot;Sales&quot;,&quot;Accounts&quot;],&quot;default&quot;:&quot;Sales&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Prototype&quot;}}">
+class Component extends DCLogic {
+  state = {
+    screen: 'phone', tab: 'sales', history: [],
+    phone: '98450 62110', otp: '',
+    reg: { shop: 'Brave & Cave Mens Salon', owner: 'Arun Prakash', addr: 'Shop 7, 14 Kasturba Road', city: 'Bengaluru', pin: '560001', gst: '29ABCDE1234F1Z5' },
+    staffDraft: [
+      { name: 'Sameer Khan', role: 'Master barber' },
+      { name: 'Imran Sheikh', role: 'Barber' },
+      { name: 'Rakesh Yadav', role: 'Stylist' },
+      { name: 'Vinod Kumar', role: 'Grooming' }
+    ],
+    newStaffName: '',
+    period: 'Day',
+    custFilter: 'All', custQuery: '', selCust: 0,
+    cart: [], stylist: 0, payMode: 'UPI', billCust: 0,
+    day: 1, bookSvc: null, bookSlot: null, sendConfirm: true,
+    audience: 1, msgKey: 'Monthly offer',
+    msg: 'Hi [name] — [offer] at [shop] this month: beard colour free with any haircut, Mon–Wed. Reply BOOK and we\u2019ll hold your chair.',
+    addExpenseOpen: false, expCat: 'Products & stock', expAmount: '', expNote: '',
+    newSvcName: '', newSvcPrice: '', newSvcCat: 'Hair',
+    accent: null,
+    customers: [
+      { id: 0, name: 'Vikram Rao', phone: '98862 10394', visits: 31, spend: 42600, last: '15 Aug', star: true, stylist: 'Sameer Khan', note: 'Beard trim every second Saturday, 8 am sharp. Scissor cut only, no machine on top.', due: 0 },
+      { id: 1, name: 'Rohit Menon', phone: '99012 77345', visits: 18, spend: 28400, last: '14 Aug', star: true, stylist: 'Sameer Khan', note: 'Fade + beard shape. Books the last slot on Fridays.', due: 800 },
+      { id: 2, name: 'Karthik Reddy', phone: '97400 55210', visits: 9, spend: 11650, last: '2 Aug', star: false, stylist: 'Imran Sheikh', note: 'Brings his son — book two chairs together.', due: 0 },
+      { id: 3, name: 'Aditya Shetty', phone: '98450 90876', visits: 22, spend: 39300, last: '16 Aug', star: true, stylist: 'Vinod Kumar', note: 'Monthly clean-up + D-Tan. Sensitive skin, no bleach.', due: 0 },
+      { id: 4, name: 'Naveen Krishnan', phone: '96320 14509', visits: 4, spend: 3900, last: '21 Jun', star: false, stylist: 'Imran Sheikh', note: 'Two months since last visit — good rebook candidate.', due: 0 },
+      { id: 5, name: 'Faisal Ahmed', phone: '99801 33421', visits: 15, spend: 31100, last: '12 Aug', star: false, stylist: 'Rakesh Yadav', note: 'Groom package enquiry for November wedding.', due: 2400 },
+      { id: 6, name: 'Sandeep Nair', phone: '90080 66712', visits: 12, spend: 16750, last: '9 Aug', star: false, stylist: 'Vinod Kumar', note: 'Beard colour fortnightly, ammonia-free only.', due: 0 },
+      { id: 7, name: 'Joseph Mathew', phone: '98860 41122', visits: 7, spend: 8600, last: '5 Aug', star: false, stylist: 'Rakesh Yadav', note: 'Hair spa after cricket season. Walks in, never books.', due: 0 }
+    ],
+    services: [
+      { id: 1, cat: 'Hair', name: 'Haircut', price: 300 },
+      { id: 2, cat: 'Hair', name: 'Haircut + wash', price: 400 },
+      { id: 3, cat: 'Hair', name: 'Skin fade', price: 450 },
+      { id: 4, cat: 'Hair', name: 'Kids cut', price: 200 },
+      { id: 5, cat: 'Hair', name: 'Head shave', price: 250 },
+      { id: 6, cat: 'Beard', name: 'Beard trim & shape', price: 200 },
+      { id: 7, cat: 'Beard', name: 'Royal shave · hot towel', price: 350 },
+      { id: 8, cat: 'Beard', name: 'Beard colour', price: 500 },
+      { id: 9, cat: 'Colour', name: 'Hair colour · black', price: 700 },
+      { id: 10, cat: 'Colour', name: 'Global colour', price: 1800 },
+      { id: 11, cat: 'Colour', name: 'Highlights', price: 2400 },
+      { id: 12, cat: 'Care', name: 'Hair spa', price: 900 },
+      { id: 13, cat: 'Care', name: 'Head massage', price: 350 },
+      { id: 14, cat: 'Care', name: 'Face clean-up', price: 600 },
+      { id: 15, cat: 'Care', name: 'D-Tan', price: 500 },
+      { id: 16, cat: 'Packages', name: 'Groom package', price: 6500 }
+    ],
+    offers: [
+      { id: 1, name: 'Mon–Wed colour', detail: '20% off all colour services, weekdays', on: true },
+      { id: 2, name: 'Cut + beard combo', detail: 'Both for ₹450 instead of ₹500', on: true },
+      { id: 3, name: 'Refer a friend', detail: '₹100 off the next visit for both', on: false }
+    ],
+    rules: [
+      { id: 1, label: 'Appointment reminder · 3 hours before', on: true },
+      { id: 2, label: 'Payment due follow-up · every 3 days', on: true },
+      { id: 3, label: 'Daily closing summary · 9:00 pm', on: true }
+    ],
+    reminders: [
+      { id: 1, group: 'Today', kind: 'appt', title: 'Remind Aditya Shetty · 4:30 pm clean-up', sub: 'Confirmation sent, reminder not yet delivered', when: '9:20 am', action: 'Send now' },
+      { id: 2, group: 'Today', kind: 'money', title: 'Rohit Menon owes ₹800', sub: 'Fade + beard shape on 14 Aug · part paid by UPI', when: '2 days', action: 'Send request' },
+      { id: 3, group: 'Today', kind: 'close', title: 'Close the day · count cash', sub: 'Cash drawer should hold ₹4,650', when: '9:00 pm', action: 'Open sheet' },
+      { id: 4, group: 'Upcoming', kind: 'appt', title: 'Tomorrow · 6 appointments, first at 9:30 am', sub: 'Send the morning list to the shop tablet', when: 'Tue', action: 'Send list' },
+      { id: 5, group: 'Upcoming', kind: 'money', title: 'Faisal Ahmed owes ₹2,400', sub: 'Groom package advance, promised by Friday', when: 'Fri', action: 'Send request' }
+    ],
+    expenses: [
+      { id: 1, cat: 'Products & stock', note: 'Razors, blades & beard oil restock', amt: 6400, when: 'Today', mode: 'UPI' },
+      { id: 2, cat: 'Salaries', note: 'Vinod · weekly advance', amt: 3000, when: 'Today', mode: 'Cash' },
+      { id: 3, cat: 'Electricity', note: 'BESCOM bill', amt: 4180, when: 'Yesterday', mode: 'UPI' },
+      { id: 4, cat: 'Maintenance', note: 'Chair hydraulics · 2 units', amt: 1750, when: 'Yesterday', mode: 'Cash' },
+      { id: 5, cat: 'Marketing', note: 'Instagram boost · beard offer', amt: 900, when: '15 Aug', mode: 'Card' },
+      { id: 6, cat: 'Rent', note: 'August rent · Kasturba Road', amt: 42000, when: '3 Aug', mode: 'UPI' }
+    ],
+    appts: [
+      { id: 1, time: '9:30', dur: '45m', cust: 'Vikram Rao', service: 'Haircut + beard trim', stylist: 'Sameer Khan', amt: 500, status: 'Done' },
+      { id: 2, time: '10:30', dur: '1h 30m', cust: 'Faisal Ahmed', service: 'Global colour', stylist: 'Rakesh Yadav', amt: 1800, status: 'In chair' },
+      { id: 3, time: '12:00', dur: '30m', cust: 'Sandeep Nair', service: 'Beard colour', stylist: 'Vinod Kumar', amt: 500, status: 'Confirmed' },
+      { id: 4, time: '2:00', dur: '45m', cust: 'Karthik Reddy', service: 'Haircut + kids cut', stylist: 'Imran Sheikh', amt: 500, status: 'Confirmed' },
+      { id: 5, time: '4:30', dur: '1h', cust: 'Aditya Shetty', service: 'Face clean-up + D-Tan', stylist: 'Vinod Kumar', amt: 1100, status: 'Not confirmed' },
+      { id: 6, time: '6:00', dur: '45m', cust: 'Rohit Menon', service: 'Skin fade', stylist: 'Sameer Khan', amt: 450, status: 'Confirmed' }
+    ],
+    bills: [
+      { id: 1, time: '9:35', cust: 'Vikram Rao', what: 'Haircut, Beard trim', stylist: 'Sameer Khan', amt: 450, mode: 'UPI' },
+      { id: 2, time: '10:10', cust: 'Walk-in', what: 'Head shave', stylist: 'Imran Sheikh', amt: 250, mode: 'Cash' },
+      { id: 3, time: '11:05', cust: 'Karthik Reddy', what: 'Haircut + wash', stylist: 'Imran Sheikh', amt: 400, mode: 'UPI' },
+      { id: 4, time: '12:40', cust: 'Sandeep Nair', what: 'Beard colour', stylist: 'Vinod Kumar', amt: 500, mode: 'Card' },
+      { id: 5, time: '1:20', cust: 'Faisal Ahmed', what: 'Global colour, Head massage', stylist: 'Rakesh Yadav', amt: 1990, mode: 'UPI' },
+      { id: 6, time: '2:45', cust: 'Aditya Shetty', what: 'Face clean-up, D-Tan', stylist: 'Vinod Kumar', amt: 1100, mode: 'Cash' }
+    ]
+  };
+
+  // ── data that never mutates ───────────────────────────────
+  staffStats = [
+    { name: 'Sameer Khan', role: 'Master barber', jobs: { Day: 11, Week: 58, Month: 232 }, rev: { Day: 6100, Week: 34600, Month: 141800 }, target: { Day: 5500, Week: 32000, Month: 130000 }, rebook: '74%', rating: '4.9', util: '88%' },
+    { name: 'Vinod Kumar', role: 'Grooming', jobs: { Day: 7, Week: 33, Month: 128 }, rev: { Day: 4320, Week: 22800, Month: 92400 }, target: { Day: 4500, Week: 24000, Month: 95000 }, rebook: '61%', rating: '4.8', util: '76%' },
+    { name: 'Imran Sheikh', role: 'Barber', jobs: { Day: 9, Week: 47, Month: 188 }, rev: { Day: 3100, Week: 18400, Month: 74200 }, target: { Day: 3500, Week: 20000, Month: 78000 }, rebook: '52%', rating: '4.6', util: '71%' },
+    { name: 'Rakesh Yadav', role: 'Stylist · colour', jobs: { Day: 4, Week: 22, Month: 91 }, rev: { Day: 3830, Week: 21400, Month: 86300 }, target: { Day: 3500, Week: 20000, Month: 82000 }, rebook: '58%', rating: '4.7', util: '69%' },
+    { name: 'Deepak', role: 'Trainee', jobs: { Day: 3, Week: 15, Month: 54 }, rev: { Day: 0, Week: 3200, Month: 12800 }, target: { Day: 800, Week: 5000, Month: 20000 }, rebook: '31%', rating: '4.4', util: '44%' }
+  ];
+
+  salesData = {
+    Day: { total: 14280, prev: 12640, bills: 27, top: 'Haircut · 12', sub: 'Sunday 17 August · shop open till 9 pm', modes: { UPI: 8600, Cash: 3680, Card: 2000 }, bars: [['10a', 1150], ['11a', 2400], ['12p', 1760], ['1p', 2890], ['2p', 1100], ['3p', 2050], ['5p', 2930]] },
+    Week: { total: 86400, prev: 79900, bills: 164, top: 'Haircut · 71', sub: '11–17 August · 7 working days', modes: { UPI: 51200, Cash: 21400, Card: 13800 }, bars: [['M', 9400], ['T', 10100], ['W', 11600], ['T', 10200], ['F', 14900], ['S', 19100], ['S', 11100]] },
+    Month: { total: 361400, prev: 328200, bills: 688, top: 'Beard trim & shape · 214', sub: 'August so far · 17 of 31 days', modes: { UPI: 214000, Cash: 88400, Card: 59000 }, bars: [['W1', 74400], ['W2', 82200], ['W3', 94300], ['W4', 68600], ['W5', 41900]] }
+  };
+
+  pnlData = {
+    Day: { income: 14280, expense: 9400, dues: 3200, groups: [['10a', 1150, 900], ['11a', 2400, 0], ['12p', 1760, 6400], ['1p', 2890, 1100], ['2p', 1100, 0], ['3p', 2050, 1000]], cats: [['Products & stock', 6400], ['Salaries', 3000]] },
+    Week: { income: 86400, expense: 48600, dues: 6400, groups: [['M', 9400, 5800], ['T', 10100, 3200], ['W', 11600, 7100], ['T', 10200, 3600], ['F', 14900, 6400], ['S', 19100, 9800]], cats: [['Salaries', 19000], ['Products & stock', 12600], ['Rent', 10500], ['Electricity', 4180], ['Marketing', 900], ['Maintenance', 1420]] },
+    Month: { income: 361400, expense: 214600, dues: 9800, groups: [['W1', 74400, 47200], ['W2', 82200, 44900], ['W3', 94300, 51100], ['W4', 68600, 41300], ['W5', 41900, 30100]], cats: [['Salaries', 82000], ['Rent', 42000], ['Products & stock', 48400], ['Electricity', 18600], ['Marketing', 12600], ['Maintenance', 11000]] }
+  };
+
+  days = [['Sat', '16', 5], ['Sun', '17', 6], ['Mon', '18', 4], ['Tue', '19', 6], ['Wed', '20', 3], ['Thu', '21', 5], ['Fri', '22', 7]];
+  slots = ['9:30', '10:00', '10:30', '11:00', '11:30', '12:00', '2:00', '2:30', '3:00', '4:00', '4:30', '5:30'];
+  takenSlots = ['10:30', '12:00', '4:30'];
+  audienceList = [['All customers', 312], ['MVP · starred', 28], ['Beard regulars', 96], ['Not seen in 60 days', 54]];
+  msgTemplates = {
+    'Monthly offer': 'Hi [name] — [offer] at [shop] this month: beard colour free with any haircut, Mon–Wed. Reply BOOK and we\u2019ll hold your chair.',
+    'Rebook nudge': 'Hi [name], it\u2019s been a while. Your last cut at [shop] was 6 weeks ago — shall we keep your usual Saturday slot? Reply YES and we\u2019ll confirm.',
+    'Birthday': 'Happy birthday, [name]! From everyone at [shop] — [offer] on any service this week. Just show this message at the desk.'
+  };
+  accents = ['#d9a441', '#e0c068', '#b8863b', '#8c6239'];
+  icons = {
+    users: 'M8.5 11a3.4 3.4 0 100-6.8 3.4 3.4 0 000 6.8M2.8 19.2a5.7 5.7 0 0111.4 0M16 5.2a3.4 3.4 0 010 6.6M18 18.4a5.5 5.5 0 00-1.6-3.4',
+    receipt: 'M4.5 3.5h15v17l-2.5-1.5-2.5 1.5-2.5-1.5-2.5 1.5-2.5-1.5zM8 8.5h8M8 12.5h8',
+    chart: 'M4 20h16M7.5 16v-4.5M12 16V6.5M16.5 16v-7',
+    wallet: 'M3.5 7.5h17v12h-17zM3.5 7.5L6 3.8h12l2.5 3.7M15 13.5h3.5',
+    calendar: 'M4 6.5h16v14H4zM8 3.5v4M16 3.5v4M4 11h16',
+    bell: 'M6.2 10a5.8 5.8 0 1111.6 0c0 3.8 1.4 5.3 1.4 5.3H4.8S6.2 13.8 6.2 10M10 18.8a2 2 0 004 0',
+    chat: 'M4 5.5h16v11H9.5l-5.5 4z',
+    tag: 'M13.5 3.5H20v6.5L10 20 3.5 13.5zM16.6 7h.01',
+    store: 'M4 9.5h16V20H4zM3 9.5l2-5h14l2 5M9.5 20v-6h5v6'
+  };
+
+  componentDidMount() {
+    const s = this.props.startScreen;
+    if (s && s !== 'Onboarding') {
+      const tab = s === 'Customers' ? 'customers' : s === 'Accounts' ? 'accounts' : 'sales';
+      this.setState({ screen: tab, tab });
+    }
+    this.applyAccent();
+  }
+  componentDidUpdate() { this.applyAccent(); }
+
+  rootRef = (el) => { this.rootEl = el; this.applyAccent(); };
+  accentColor() { return this.state.accent || this.props.accent || '#d9a441'; }
+  applyAccent() {
+    const el = this.rootEl; if (!el) return;
+    const a = this.accentColor();
+    el.style.setProperty('--color-accent', a);
+    el.style.setProperty('--color-accent-100', 'color-mix(in srgb, ' + a + ' 22%, #f6f5ff)');
+    el.style.setProperty('--color-accent-200', 'color-mix(in srgb, ' + a + ' 45%, #f6f5ff)');
+    el.style.setProperty('--color-accent-300', 'color-mix(in srgb, ' + a + ' 72%, #f6f5ff)');
+    el.style.setProperty('--color-accent-700', 'color-mix(in srgb, ' + a + ' 62%, #161826)');
+    el.style.setProperty('--color-accent-800', 'color-mix(in srgb, ' + a + ' 38%, #161826)');
+    el.style.setProperty('--color-accent-900', 'color-mix(in srgb, ' + a + ' 20%, #161826)');
+  }
+
+  inr(n) { return '₹' + Math.round(n).toLocaleString('en-IN'); }
+  short(n) { return n >= 100000 ? '₹' + (n / 100000).toFixed(1) + 'L' : n >= 1000 ? '₹' + Math.round(n / 1000) + 'k' : '₹' + n; }
+  initials(name) { return name.split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase(); }
+  go = (screen, keep) => {
+    this.setState(s => ({ screen, history: keep === false ? [] : s.history.concat(s.screen) }));
+  };
+  back = () => this.setState(s => {
+    const h = s.history.slice();
+    const prev = h.pop() || s.tab;
+    return { screen: prev, history: h, addExpenseOpen: false };
+  });
+  goTab = (tab) => this.setState({ screen: tab, tab, history: [] });
+
+  chip(active) {
+    const a = 'var(--color-accent)';
+    return active
+      ? { border: a, bg: 'var(--color-accent-900)', color: 'var(--color-accent-200)' }
+      : { border: 'var(--color-divider)', bg: 'transparent', color: 'color-mix(in srgb, var(--color-text) 68%, transparent)' };
+  }
+  toggleVis(on) {
+    return on
+      ? { border: 'var(--color-accent)', track: 'var(--color-accent-800)', knob: 18, knobBg: 'var(--color-accent-200)' }
+      : { border: 'var(--color-divider)', track: 'transparent', knob: 2, knobBg: 'color-mix(in srgb, var(--color-text) 40%, transparent)' };
+  }
+
+  cartItems() {
+    return this.state.cart.map(id => this.state.services.find(s => s.id === id)).filter(Boolean);
+  }
+  cartMath() {
+    const items = this.cartItems();
+    const sub = items.reduce((t, i) => t + i.price, 0);
+    const colourOn = this.state.offers.find(o => o.id === 1 && o.on);
+    const colour = items.filter(i => i.cat === 'Colour').reduce((t, i) => t + i.price, 0);
+    const disc = colourOn && colour ? Math.round(colour * 0.2) : 0;
+    const taxable = sub - disc;
+    const gst = Math.round(taxable * 0.18);
+    return { items, sub, disc, gst, total: taxable + gst, colour };
+  }
+
+  renderVals() {
+    const st = this.state, sc = st.screen;
+    const inApp = ['customers', 'sales', 'accounts'].indexOf(sc) >= 0;
+    const sd = this.salesData[st.period], pd = this.pnlData[st.period];
+    const shopName = this.props.shopName || st.reg.shop;
+    const cust = st.customers[st.selCust];
+    const m = this.cartMath();
+    const billCust = st.billCust === -1 ? { name: 'Walk-in' } : st.customers[st.billCust];
+    const stylist = this.staffStats[st.stylist];
+    const audience = this.audienceList[st.audience];
+    const openReminders = st.reminders;
+    const svcCats = ['Hair', 'Beard', 'Colour', 'Care', 'Packages'];
+    const expCats = ['Products & stock', 'Salaries', 'Rent', 'Electricity', 'Marketing', 'Maintenance'];
+
+    const maxBar = Math.max.apply(null, sd.bars.map(b => b[1]));
+    const maxG = Math.max.apply(null, pd.groups.map(g => Math.max(g[1], g[2])));
+    const catMax = Math.max.apply(null, pd.cats.map(c => c[1]));
+
+    const periodTabs = ['Day', 'Week', 'Month'].map(p => ({
+      label: p, on: () => this.setState({ period: p }),
+      bg: st.period === p ? 'var(--color-accent-900)' : 'transparent',
+      ring: st.period === p ? 'inset 0 0 0 1px var(--color-accent)' : 'none',
+      color: st.period === p ? 'var(--color-accent)' : 'color-mix(in srgb, var(--color-text) 62%, transparent)'
+    }));
+
+    const filtered = st.customers.filter(c => {
+      const q = st.custQuery.trim().toLowerCase();
+      if (q && c.name.toLowerCase().indexOf(q) < 0 && c.phone.indexOf(q) < 0) return false;
+      if (st.custFilter === 'MVP ★') return c.star;
+      if (st.custFilter === 'Dues') return c.due > 0;
+      return true;
+    });
+
+    const railGroups = [
+      { label: 'Onboarding', items: ['phone', 'otp', 'register', 'workers'] },
+      { label: 'Tabs', items: ['customers', 'sales', 'accounts'] },
+      { label: 'Money', items: ['bill', 'invoice', 'expenses'] },
+      { label: 'Operations', items: ['appointments', 'booking', 'reminders', 'bulk', 'staff', 'pricing', 'profile'] }
+    ].map(g => ({
+      label: g.label,
+      items: g.items.map(k => {
+        const active = sc === k;
+        const c = this.chip(active);
+        return { label: k, border: c.border, bg: c.bg, color: active ? c.color : 'color-mix(in srgb, var(--color-text) 55%, transparent)', on: () => (['customers', 'sales', 'accounts'].indexOf(k) >= 0 ? this.goTab(k) : this.go(k)) };
+      })
+    }));
+
+    return {
+      rootRef: this.rootRef,
+      shopName, inApp, railGroups, periodTabs, todayLabel: 'Sun 17 Aug',
+      isPhone: sc === 'phone', isOtp: sc === 'otp', isRegister: sc === 'register', isWorkers: sc === 'workers',
+      isCustomers: sc === 'customers', isCustomerDetail: sc === 'customer', isSales: sc === 'sales',
+      isBill: sc === 'bill', isInvoice: sc === 'invoice', isSent: sc === 'sent', isAccounts: sc === 'accounts',
+      isExpenses: sc === 'expenses', isAppointments: sc === 'appointments', isBooking: sc === 'booking',
+      isReminders: sc === 'reminders', isBulk: sc === 'bulk', isBulkSent: sc === 'bulksent',
+      isStaff: sc === 'staff', isPricing: sc === 'pricing', isProfile: sc === 'profile',
+      back: this.back, noop: () => {},
+      toSales: () => this.goTab('sales'), toAccounts: () => this.goTab('accounts'),
+      toRegister: (e) => { if (e) e.preventDefault(); this.go('register'); },
+      toWorkers: () => this.go('workers'), toReminders: () => this.go('reminders'),
+      toBulk: () => this.go('bulk'), toBooking: () => this.go('booking'),
+
+      // login
+      phone: st.phone, onPhone: e => this.setState({ phone: e.target.value }),
+      toOtp: () => this.go('otp'),
+      otpBoxes: [0, 1, 2, 3].map(i => ({
+        d: st.otp[i] || '', border: st.otp.length === i ? 'var(--color-accent)' : 'var(--color-divider)'
+      })),
+      otpHint: st.otp.length < 4 ? 'Resend available in 0:24' : 'Code entered · demo accepts any 4 digits',
+      otpIncomplete: st.otp.length < 4,
+      keypad: ['1', '2', '3', '4', '5', '6', '7', '8', '9', '', '0', '⌫'].map(k => ({
+        label: k, bg: k === '' ? 'transparent' : 'var(--color-surface)',
+        on: () => this.setState(s => ({ otp: k === '⌫' ? s.otp.slice(0, -1) : k === '' ? s.otp : (s.otp + k).slice(0, 4) }))
+      })),
+      verify: () => this.goTab('sales'),
+      reg: st.reg,
+      onReg: ['shop', 'owner', 'addr', 'city', 'pin', 'gst'].reduce((o, k) => {
+        o[k] = e => this.setState(s => ({ reg: Object.assign({}, s.reg, { [k]: e.target.value }) })); return o;
+      }, {}),
+      staffDraft: st.staffDraft.map((s, i) => ({
+        name: s.name, role: s.role, initials: this.initials(s.name),
+        remove: () => this.setState(x => ({ staffDraft: x.staffDraft.filter((_, j) => j !== i) }))
+      })),
+      staffCount: st.staffDraft.length,
+      newStaffName: st.newStaffName,
+      onNewStaffName: e => this.setState({ newStaffName: e.target.value }),
+      addStaff: () => this.setState(s => s.newStaffName.trim() ? { staffDraft: s.staffDraft.concat({ name: s.newStaffName.trim(), role: 'Stylist' }), newStaffName: '' } : {}),
+      finishSetup: () => this.goTab('sales'),
+
+      // customers
+      custTotal: st.customers.length + 240,
+      custQuery: st.custQuery, onCustQuery: e => this.setState({ custQuery: e.target.value }),
+      custFilters: ['All', 'MVP ★', 'Dues'].map(f => Object.assign({ label: f, on: () => this.setState({ custFilter: f }) }, this.chip(st.custFilter === f))),
+      custList: filtered.map(c => ({
+        name: c.name, initials: this.initials(c.name),
+        badge: c.star ? '★ MVP' : '',
+        meta: c.visits + ' visits · last ' + c.last + ' · ' + c.stylist,
+        spendFmt: this.inr(c.spend),
+        dueLabel: c.due ? 'due ' + this.inr(c.due) : 'settled',
+        dueColor: c.due ? 'var(--color-accent)' : 'color-mix(in srgb, var(--color-text) 35%, transparent)',
+        avatarBg: c.star ? 'var(--color-accent-800)' : 'var(--color-neutral-800)',
+        avatarFg: c.star ? 'var(--color-accent-100)' : 'var(--color-neutral-200)',
+        starColor: c.star ? 'var(--color-accent)' : 'color-mix(in srgb, var(--color-text) 30%, transparent)',
+        starFill: c.star ? 'var(--color-accent)' : 'none',
+        open: () => { this.setState({ selCust: c.id }); this.go('customer'); },
+        toggleStar: () => this.setState(s => ({ customers: s.customers.map(x => x.id === c.id ? Object.assign({}, x, { star: !x.star }) : x) }))
+      })),
+      cust: {
+        name: cust.name, phone: cust.phone, initials: this.initials(cust.name),
+        note: cust.note, stylist: cust.stylist,
+        starColor: cust.star ? 'var(--color-accent)' : 'color-mix(in srgb, var(--color-text) 30%, transparent)',
+        starFill: cust.star ? 'var(--color-accent)' : 'none',
+        toggleStar: () => this.setState(s => ({ customers: s.customers.map(x => x.id === cust.id ? Object.assign({}, x, { star: !x.star }) : x) })),
+        tags: [cust.star ? { label: '★ MVP', cls: 'tag-accent' } : { label: 'Regular', cls: 'tag-neutral' },
+          { label: cust.visits > 15 ? 'Every 3 weeks' : 'Occasional', cls: 'tag-outline' }]
+          .concat(cust.due ? [{ label: 'Payment due', cls: 'tag-neutral' }] : []),
+        stats: [
+          { label: 'Lifetime', value: this.inr(cust.spend) },
+          { label: 'Visits', value: cust.visits },
+          { label: 'Avg bill', value: this.inr(cust.spend / cust.visits) }
+        ],
+        visits: [
+          { date: cust.last, what: 'Haircut, beard trim & shape', amt: this.inr(450) },
+          { date: '12 Jul', what: 'Skin fade, head massage', amt: this.inr(800) },
+          { date: '28 Jun', what: 'Hair colour · black', amt: this.inr(700) }
+        ]
+      },
+      startBillFor: () => { this.setState({ billCust: cust.id, cart: [] }); this.go('bill'); },
+
+      // sales
+      sales: {
+        total: this.inr(sd.total), sub: sd.sub, bills: sd.bills, avg: this.inr(sd.total / sd.bills), top: sd.top,
+        delta: (sd.total >= sd.prev ? '▲ ' : '▼ ') + Math.round(Math.abs(sd.total - sd.prev) / sd.prev * 100) + '% vs last ' + st.period.toLowerCase(),
+        deltaColor: sd.total >= sd.prev ? 'var(--color-accent)' : 'var(--color-neutral-400)',
+        deltaSign: '',
+        bars: sd.bars.map(b => ({ l: b[0], h: Math.round(b[1] / maxBar * 72) + 4, fill: b[1] === maxBar ? 'var(--color-accent)' : 'var(--color-accent-800)' })),
+        modes: Object.keys(sd.modes).map(k => ({ label: k, amt: this.short(sd.modes[k]), pct: Math.round(sd.modes[k] / sd.total * 100) }))
+      },
+      billList: st.bills.slice().reverse().map(b => ({
+        time: b.time, cust: b.cust, what: b.what, stylist: b.stylist, amt: this.inr(b.amt), mode: b.mode,
+        open: () => { this.setState({ cart: [], billCust: -1 }); this.go('invoice'); }
+      })),
+      startBill: () => { this.setState({ cart: [], billCust: -1, screen: 'bill' }); },
+
+      // quick bill
+      cartCount: st.cart.length,
+      cartEmpty: st.cart.length === 0,
+      cartTotal: this.inr(m.total),
+      cartSummary: st.cart.length ? m.items.length + ' services · GST ' + this.inr(m.gst) + (m.disc ? ' · saved ' + this.inr(m.disc) : '') : 'Pick services to start',
+      hasOffer: m.disc > 0,
+      offerNote: 'Mon–Wed colour offer applied — 20% off ' + this.inr(m.colour) + ' of colour work, ' + this.inr(m.disc) + ' off.',
+      billCustChips: [{ id: -1, name: 'Walk-in' }].concat(st.customers.slice(0, 6)).map(c => Object.assign({
+        label: c.name, on: () => this.setState({ billCust: c.id })
+      }, this.chip(st.billCust === c.id))),
+      serviceGroups: svcCats.map(cat => ({
+        cat, items: st.services.filter(s => s.cat === cat).map(s => {
+          const on = st.cart.indexOf(s.id) >= 0;
+          return {
+            name: s.name, price: this.inr(s.price),
+            border: on ? 'var(--color-accent)' : 'var(--color-divider)',
+            bg: on ? 'var(--color-accent-900)' : 'var(--color-surface)',
+            priceColor: on ? 'var(--color-accent-200)' : 'color-mix(in srgb, var(--color-text) 50%, transparent)',
+            on: () => this.setState(x => ({ cart: on ? x.cart.filter(i => i !== s.id) : x.cart.concat(s.id) })),
+            remove: () => this.setState(x => ({ services: x.services.filter(i => i.id !== s.id) }))
+          };
+        })
+      })).filter(g => g.items.length),
+      topServiceChips: st.services.slice(0, 6).map(s => {
+        const on = st.bookSvc === s.id;
+        return {
+          name: s.name, price: this.inr(s.price),
+          border: on ? 'var(--color-accent)' : 'var(--color-divider)',
+          bg: on ? 'var(--color-accent-900)' : 'var(--color-surface)',
+          priceColor: on ? 'var(--color-accent-200)' : 'color-mix(in srgb, var(--color-text) 45%, transparent)',
+          on: () => this.setState({ bookSvc: s.id })
+        };
+      }),
+      stylistChips: this.staffStats.map((s, i) => Object.assign({
+        name: s.name.split(' ')[0], initials: this.initials(s.name), on: () => this.setState({ stylist: i })
+      }, this.chip(st.stylist === i))),
+      payChips: ['UPI', 'Cash', 'Card'].map(p => Object.assign({ label: p, on: () => this.setState({ payMode: p }) }, this.chip(st.payMode === p))),
+      toInvoice: () => {
+        const bill = { id: Date.now(), time: '3:10', cust: billCust.name, what: m.items.map(i => i.name).join(', '), stylist: stylist.name, amt: m.total, mode: st.payMode };
+        this.setState(s => ({ bills: s.bills.concat(bill) }));
+        this.go('invoice');
+      },
+
+      // invoice
+      inv: {
+        no: 'INV-0817-042', date: '17 Aug 2026 · 3:10 pm',
+        addr: st.reg.addr + ', ' + st.reg.city + ' ' + st.reg.pin, gst: st.reg.gst,
+        cust: billCust.name, stylist: stylist.name, mode: st.payMode,
+        items: (m.items.length ? m.items : [{ name: 'Global colour', price: 1800 }, { name: 'Head massage', price: 350 }]).map(i => ({ name: i.name, price: this.inr(i.price) })),
+        totals: [
+          { label: 'Subtotal', value: this.inr(m.items.length ? m.sub : 2150), color: 'color-mix(in srgb, var(--color-text) 65%, transparent)' },
+          { label: 'Mon–Wed colour · 20%', value: '− ' + this.inr(m.items.length ? m.disc : 360), color: 'var(--color-accent)' },
+          { label: 'GST 18%', value: this.inr(m.items.length ? m.gst : 322), color: 'color-mix(in srgb, var(--color-text) 65%, transparent)' }
+        ],
+        total: this.inr(m.items.length ? m.total : 2112)
+      },
+      sendInvoice: () => this.go('sent'),
+      waPreview: shopName + ': Thanks, ' + billCust.name + '! Invoice INV-0817-042 for ' + this.inr(m.items.length ? m.total : 2112) + ' is attached. Paid by ' + st.payMode + '. See you in 4 weeks — reply BOOK to hold your chair.',
+
+      // accounts
+      pnl: {
+        income: this.short(pd.income), expense: this.inr(pd.expense), net: this.inr(pd.income - pd.expense),
+        margin: Math.round((pd.income - pd.expense) / pd.income * 100) + '%',
+        dues: this.inr(pd.dues),
+        groups: pd.groups.map(g => ({ l: g[0], hIn: Math.round(g[1] / maxG * 88) + 3, hEx: Math.round(g[2] / maxG * 88) + 3 })),
+        cats: pd.cats.map(c => ({ label: c[0], amt: this.inr(c[1]), pct: Math.round(c[1] / catMax * 100), fill: c[1] === catMax ? 'var(--color-accent)' : 'var(--color-accent-700)' }))
+      },
+      tools: [
+        { label: 'Expenses', sub: 'Log & categorise', d: this.icons.wallet, badge: '', on: () => this.go('expenses') },
+        { label: 'Appointments', sub: 'Day agenda', d: this.icons.calendar, badge: '6 today', on: () => this.go('appointments') },
+        { label: 'Reminders', sub: 'Auto & manual', d: this.icons.bell, badge: String(openReminders.length), on: () => this.go('reminders') },
+        { label: 'Bulk WhatsApp', sub: 'Offers & nudges', d: this.icons.chat, badge: '', on: () => this.go('bulk') },
+        { label: 'Team', sub: 'Who delivers what', d: this.icons.users, badge: '', on: () => this.go('staff') },
+        { label: 'Price & offers', sub: 'Add, delete, discount', d: this.icons.tag, badge: '', on: () => this.go('pricing') },
+        { label: 'Shop profile', sub: 'Logo, theme, GST', d: this.icons.store, badge: '', on: () => this.go('profile') }
+      ],
+
+      // expenses
+      expenseList: st.expenses.map(e => ({ note: e.note, cat: e.cat, amt: this.inr(e.amt), when: e.when, mode: e.mode })),
+      expenseCount: st.expenses.length,
+      addExpenseOpen: st.addExpenseOpen,
+      openAddExpense: () => this.setState({ addExpenseOpen: true }),
+      closeSheet: () => this.setState({ addExpenseOpen: false }),
+      expCatChips: expCats.map(c => Object.assign({ label: c, on: () => this.setState({ expCat: c }) }, this.chip(st.expCat === c))),
+      expAmount: st.expAmount, onExpAmount: e => this.setState({ expAmount: e.target.value }),
+      expNote: st.expNote, onExpNote: e => this.setState({ expNote: e.target.value }),
+      saveExpense: () => this.setState(s => ({
+        expenses: [{ id: Date.now(), cat: s.expCat, note: s.expNote || s.expCat, amt: Number(s.expAmount) || 0, when: 'Today', mode: 'UPI' }].concat(s.expenses),
+        addExpenseOpen: false, expAmount: '', expNote: ''
+      })),
+
+      // appointments
+      dayChips: this.days.map((d, i) => Object.assign({ dow: d[0], date: d[1], count: d[2] + ' apt', on: () => this.setState({ day: i }) }, this.chip(st.day === i))),
+      apptSummary: st.appts.length + ' appointments · ' + this.inr(st.appts.reduce((t, a) => t + a.amt, 0)) + ' expected · 2 chairs free after 3 pm · walk-ins welcome',
+      apptList: st.appts.map(a => {
+        const next = { 'Not confirmed': 'Confirm', 'Confirmed': 'Mark arrived', 'In chair': 'Bill & close', 'Done': 'Billed' };
+        const cls = { 'Done': 'tag-neutral', 'In chair': 'tag-accent', 'Confirmed': 'tag-outline', 'Not confirmed': 'tag-neutral' };
+        return {
+          time: a.time, dur: a.dur, cust: a.cust, service: a.service, stylist: a.stylist, amt: this.inr(a.amt),
+          status: a.status, statusCls: cls[a.status],
+          rail: a.status === 'In chair' ? 'var(--color-accent)' : a.status === 'Done' ? 'var(--color-neutral-700)' : 'var(--color-accent-800)',
+          nextAction: next[a.status], remindLabel: a.status === 'Done' ? 'Rebook' : 'Remind',
+          advance: () => {
+            if (a.status === 'In chair') { this.setState({ cart: [], billCust: -1 }); this.go('bill'); return; }
+            const order = { 'Not confirmed': 'Confirmed', 'Confirmed': 'In chair', 'Done': 'Done' };
+            this.setState(s => ({ appts: s.appts.map(x => x.id === a.id ? Object.assign({}, x, { status: order[x.status] }) : x) }));
+          },
+          remind: () => this.go('bulk')
+        };
+      }),
+      bookDayLabel: this.days[st.day][0] + ' ' + this.days[st.day][1] + ' Aug',
+      slotChips: this.slots.map(sl => {
+        const taken = this.takenSlots.indexOf(sl) >= 0;
+        const on = st.bookSlot === sl;
+        return {
+          label: sl, taken,
+          cursor: taken ? 'not-allowed' : 'pointer',
+          border: on ? 'var(--color-accent)' : 'var(--color-divider)',
+          bg: on ? 'var(--color-accent-900)' : taken ? 'transparent' : 'var(--color-surface)',
+          color: taken ? 'color-mix(in srgb, var(--color-text) 25%, transparent)' : on ? 'var(--color-accent)' : 'var(--color-text)',
+          on: () => this.setState({ bookSlot: sl })
+        };
+      }),
+      sendConfirm: st.sendConfirm,
+      toggleConfirm: () => this.setState(s => ({ sendConfirm: !s.sendConfirm })),
+      bookIncomplete: !(st.bookSvc && st.bookSlot),
+      bookCta: st.bookSlot ? 'Confirm ' + this.days[st.day][0] + ' ' + st.bookSlot + (st.sendConfirm ? ' & WhatsApp' : '') : 'Pick a service and slot',
+      confirmBooking: () => {
+        const svc = st.services.find(s => s.id === st.bookSvc);
+        const c = st.billCust === -1 ? { name: 'Walk-in' } : st.customers[st.billCust];
+        this.setState(s => ({
+          appts: s.appts.concat({ id: Date.now(), time: st.bookSlot, dur: '1h', cust: c.name, service: svc.name, stylist: stylist.name, amt: svc.price, status: 'Confirmed' }),
+          bookSlot: null, bookSvc: null
+        }));
+        this.go('appointments', false);
+      },
+
+      // reminders
+      reminderCount: openReminders.length,
+      remindersEmpty: openReminders.length === 0,
+      reminderGroups: ['Today', 'Upcoming'].map(g => ({
+        label: g,
+        items: openReminders.filter(r => r.group === g).map(r => ({
+          title: r.title, sub: r.sub, when: r.when, action: r.action,
+          d: r.kind === 'money' ? this.icons.receipt : r.kind === 'close' ? this.icons.chart : this.icons.bell,
+          act: () => r.kind === 'money' ? this.go('bulk') : this.go('appointments'),
+          done: () => this.setState(s => ({ reminders: s.reminders.filter(x => x.id !== r.id) }))
+        }))
+      })).filter(g => g.items.length),
+      reminderRules: st.rules.map(r => Object.assign({
+        label: r.label, toggle: () => this.setState(s => ({ rules: s.rules.map(x => x.id === r.id ? Object.assign({}, x, { on: !x.on }) : x) }))
+      }, this.toggleVis(r.on))),
+
+      // bulk whatsapp
+      audiences: this.audienceList.map((a, i) => {
+        const on = st.audience === i;
+        return {
+          label: a[0], count: a[1] + ' people',
+          bg: on ? 'var(--color-accent-900)' : 'var(--color-surface)',
+          border: on ? 'var(--color-accent)' : 'transparent',
+          dotBorder: on ? 'var(--color-accent)' : 'color-mix(in srgb, var(--color-text) 35%, transparent)',
+          dotBg: on ? 'var(--color-accent)' : 'transparent',
+          dotRing: on ? 'inset 0 0 0 3px var(--color-bg)' : 'none',
+          on: () => this.setState({ audience: i })
+        };
+      }),
+      templates: Object.keys(this.msgTemplates).map(k => Object.assign({
+        label: k, on: () => this.setState({ msgKey: k, msg: this.msgTemplates[k] })
+      }, this.chip(st.msgKey === k))),
+      msg: st.msg, onMsg: e => this.setState({ msg: e.target.value }),
+      msgPreview: st.msg.split('[name]').join('Meera').split('[shop]').join(shopName).split('[offer]').join('20% off'),
+      previewName: 'Meera Iyer',
+      audienceCount: audience[1], audienceLabel: audience[0],
+      sendMinutes: Math.max(1, Math.round(audience[1] / 40)),
+      sendBulk: () => this.go('bulksent'),
+      bulkStats: [{ label: 'Queued', value: audience[1] }, { label: 'Delivered', value: Math.round(audience[1] * 0.62) }, { label: 'Replied', value: Math.round(audience[1] * 0.11) }],
+
+      // staff
+      staffSummary: this.staffStats.reduce((t, s) => t + s.jobs[st.period], 0) + ' services delivered · ' + this.inr(this.staffStats.reduce((t, s) => t + s.rev[st.period], 0)) + ' billed to the team',
+      staffCards: this.staffStats.map((s, i) => {
+        const pct = Math.round(s.rev[st.period] / s.target[st.period] * 100);
+        return {
+          name: s.name, role: s.role, initials: this.initials(s.name),
+          revenue: this.inr(s.rev[st.period]), jobs: s.jobs[st.period],
+          target: this.short(s.target[st.period]), pct, pctClamped: Math.min(pct, 100),
+          barFill: pct >= 100 ? 'var(--color-accent)' : pct >= 70 ? 'var(--color-accent-600)' : 'var(--color-neutral-600)',
+          rebook: s.rebook, rating: s.rating, util: s.util,
+          topDisplay: i === 0 ? 'inline-flex' : 'none'
+        };
+      }),
+
+      // pricing
+      serviceCount: st.services.length,
+      newSvcName: st.newSvcName, onNewSvcName: e => this.setState({ newSvcName: e.target.value }),
+      newSvcPrice: st.newSvcPrice, onNewSvcPrice: e => this.setState({ newSvcPrice: e.target.value }),
+      svcCatChips: svcCats.map(c => Object.assign({ label: c, on: () => this.setState({ newSvcCat: c }) }, this.chip(st.newSvcCat === c))),
+      addService: () => this.setState(s => s.newSvcName.trim() ? {
+        services: s.services.concat({ id: Date.now(), cat: s.newSvcCat, name: s.newSvcName.trim(), price: Number(s.newSvcPrice) || 0 }),
+        newSvcName: '', newSvcPrice: ''
+      } : {}),
+      offerList: st.offers.map(o => Object.assign({
+        name: o.name, detail: o.detail,
+        toggle: () => this.setState(s => ({ offers: s.offers.map(x => x.id === o.id ? Object.assign({}, x, { on: !x.on }) : x) })),
+        remove: () => this.setState(s => ({ offers: s.offers.filter(x => x.id !== o.id) }))
+      }, this.toggleVis(o.on))),
+      addOffer: () => this.setState(s => ({ offers: s.offers.concat({ id: Date.now(), name: 'New offer', detail: 'Tap to describe the discount and its days', on: false }) })),
+
+      // profile
+      accentSwatches: this.accents.map(a => ({
+        color: a, ring: this.accentColor() === a ? 'var(--color-text)' : 'transparent',
+        on: () => this.setState({ accent: a })
+      })),
+      profileRows: [
+        { label: 'Owner', value: st.reg.owner },
+        { label: 'Login number', value: '+91 ' + st.phone },
+        { label: 'GSTIN', value: st.reg.gst },
+        { label: 'Team', value: this.staffStats.length + ' people' },
+        { label: 'Invoice prefix', value: 'INV-' },
+        { label: 'GST on services', value: '18%' }
+      ],
+      signOut: () => this.setState({ screen: 'phone', history: [], otp: '' }),
+
+      tabs: [
+        { key: 'customers', label: 'Customers', d: this.icons.users },
+        { key: 'sales', label: 'Sales', d: this.icons.receipt },
+        { key: 'accounts', label: 'Accounts', d: this.icons.chart }
+      ].map(t => ({
+        label: t.label, d: t.d,
+        color: st.tab === t.key ? 'var(--color-accent)' : 'color-mix(in srgb, var(--color-text) 50%, transparent)',
+        line: st.tab === t.key ? 'var(--color-accent)' : 'transparent',
+        on: () => this.goTab(t.key)
+      }))
+    };
+  }
+}
+
+</script>
+</body>
+</html>

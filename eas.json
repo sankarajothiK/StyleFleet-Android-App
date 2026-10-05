@@ -1,0 +1,40 @@
+{
+  "cli": {
+    "version": ">= 24.6.0",
+    "appVersionSource": "local"
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal"
+    },
+    "preview": {
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_SUPABASE_URL": "https://scgokpcoyfewrtrwqxpu.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "sb_publishable_qkXDIACBQgrrge462eSpJg_UCMKQNna",
+        "EXPO_PUBLIC_GEMINI_API_KEY": "",
+        "EXPO_PUBLIC_CASHFREE_ENV": "PRODUCTION",
+        "EXPO_PUBLIC_CASHFREE_APP_ID": "13889028906e60f591e43bbcf1f2098831",
+        "EXPO_PUBLIC_CASHFREE_SECRET_KEY": ""
+      }
+    },
+    "production": {
+      "autoIncrement": true,
+      "env": {
+        "EXPO_PUBLIC_SUPABASE_URL": "https://scgokpcoyfewrtrwqxpu.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "sb_publishable_qkXDIACBQgrrge462eSpJg_UCMKQNna",
+        "EXPO_PUBLIC_GEMINI_API_KEY": "",
+        "EXPO_PUBLIC_CASHFREE_ENV": "PRODUCTION",
+        "EXPO_PUBLIC_CASHFREE_APP_ID": "13889028906e60f591e43bbcf1f2098831",
+        "EXPO_PUBLIC_CASHFREE_SECRET_KEY": ""
+      }
+    }
+  },
+  "submit": {
+    "production": {}
+  }
+}
