@@ -6,12 +6,12 @@ import {
   TouchableOpacity,
   ScrollView,
   StyleSheet,
-  Modal,
   Alert,
   Linking,
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
+import { Modal } from '../common/KeyboardAwareModal';
 import { useTheme } from '../../theme/ThemeContext';
 import { useLanguage } from '../../i18n/LanguageContext';
 import { Button } from '../common/Button';

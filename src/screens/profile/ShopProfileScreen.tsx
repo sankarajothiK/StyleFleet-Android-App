@@ -7,7 +7,6 @@ import {
   StyleSheet,
   Image,
   TextInput,
-  Modal,
   Alert,
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -15,6 +14,7 @@ import {
   Linking,
   Keyboard,
 } from 'react-native';
+import { Modal } from '../../components/common/KeyboardAwareModal';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
 import { useTheme } from '../../theme/ThemeContext';

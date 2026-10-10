@@ -6,13 +6,13 @@ import {
   TouchableOpacity,
   ScrollView,
   StyleSheet,
-  Modal,
   Alert,
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
   Keyboard,
 } from 'react-native';
+import { Modal } from '../../components/common/KeyboardAwareModal';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '../../theme/ThemeContext';
 import { GlassBackdrop } from '../../components/common/GlassBackdrop';

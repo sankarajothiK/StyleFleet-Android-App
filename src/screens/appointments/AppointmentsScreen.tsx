@@ -7,7 +7,6 @@ import {
   StyleSheet,
   Linking,
   Alert,
-  Modal,
   TextInput,
   Animated,
   PanResponder,
@@ -16,6 +15,7 @@ import {
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
+import { Modal } from '../../components/common/KeyboardAwareModal';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '../../theme/ThemeContext';
 import { useLanguage } from '../../i18n/LanguageContext';

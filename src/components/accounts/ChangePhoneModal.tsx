@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
-  Modal,
   TouchableOpacity,
   TextInput,
   StyleSheet,
@@ -13,6 +12,7 @@ import {
   ScrollView,
   Keyboard,
 } from 'react-native';
+import { Modal } from '../common/KeyboardAwareModal';
 import { useTheme } from '../../theme/ThemeContext';
 import { useLanguage } from '../../i18n/LanguageContext';
 import { authService } from '../../services/authService';

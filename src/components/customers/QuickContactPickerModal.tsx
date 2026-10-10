@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
-  Modal,
   TextInput,
   TouchableOpacity,
   FlatList,
@@ -13,6 +12,7 @@ import {
   Keyboard,
   KeyboardAvoidingView,
 } from 'react-native';
+import { Modal } from '../common/KeyboardAwareModal';
 import * as Contacts from 'expo-contacts/legacy';
 import { useTheme } from '../../theme/ThemeContext';
 import { useLanguage } from '../../i18n/LanguageContext';

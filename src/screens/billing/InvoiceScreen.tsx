@@ -8,12 +8,12 @@ import {
   Linking,
   Image,
   Platform,
-  Modal,
   TextInput,
   TouchableOpacity,
   ActivityIndicator,
   KeyboardAvoidingView,
 } from 'react-native';
+import { Modal } from '../../components/common/KeyboardAwareModal';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
