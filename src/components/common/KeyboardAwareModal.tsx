@@ -7,7 +7,7 @@ import { Keyboard, Modal as RNModal, ModalProps, Platform, TextInput, View } fro
  * measures where it really is on screen and raises the whole sheet by exactly what is needed.
  * Nothing changes on iOS (the screens already use KeyboardAvoidingView there).
  */
-const GAP = 16;
+const GAP = 64;
 
 export const Modal = ({ children, visible, ...rest }: ModalProps) => {
   const [shift, setShift] = useState(0);
