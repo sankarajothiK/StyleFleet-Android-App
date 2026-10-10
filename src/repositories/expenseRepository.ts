@@ -357,7 +357,7 @@ export class ExpenseRepository {
     await AsyncStorage.setItem(`${STORAGE_KEY_EXPENSES}_${shopId}`, JSON.stringify(expenses));
   }
 
-  private async getCachedExpenses(shopId: string): Promise<Expense[] | null> {
+  async getCachedExpenses(shopId: string): Promise<Expense[] | null> {
     try {
       const data = await AsyncStorage.getItem(`${STORAGE_KEY_EXPENSES}_${shopId}`);
       if (data) return JSON.parse(data);

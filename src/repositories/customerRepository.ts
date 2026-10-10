@@ -3,6 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Customer } from '../types/domain';
 import { generateUuid, isValidUuid } from '../utils/uuid';
 import { assertSaved, friendlyDbMessage, isRemoteShop } from '../utils/persist';
+import { fetchShopBillRows } from './shopBillRows';
 
 const STORAGE_KEY_CUSTOMERS = '@salon_os_customers_cache';
 
@@ -19,11 +20,8 @@ export class CustomerRepository {
           .select('*')
           .eq('shop_id', shopId)
           .order('name', { ascending: true }),
-        // Actual bill totals, to accurately aggregate visits, spend, and dues
-        supabase
-          .from('bills')
-          .select('id, invoice_number, customer_id, total_minor, paid_amount_minor, due_amount_minor, status, created_at, issued_at, notes, payments(*)')
-          .eq('shop_id', shopId),
+        // Actual bill totals, to accurately aggregate visits, spend, and dues (shared with the bills list)
+        fetchShopBillRows(shopId),
       ]);
 
       if (!error && data) {
@@ -1017,7 +1015,7 @@ export class CustomerRepository {
     await AsyncStorage.setItem(`${STORAGE_KEY_CUSTOMERS}_${shopId}`, JSON.stringify(customers));
   }
 
-  private async getCachedCustomers(shopId: string): Promise<Customer[] | null> {
+  async getCachedCustomers(shopId: string): Promise<Customer[] | null> {
     try {
       const data = await AsyncStorage.getItem(`${STORAGE_KEY_CUSTOMERS}_${shopId}`);
       if (data) {

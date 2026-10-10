@@ -463,7 +463,7 @@ export class ServiceRepository {
     await AsyncStorage.setItem(`${STORAGE_KEY_SERVICES}_${shopId}`, JSON.stringify(services));
   }
 
-  private async getCachedServices(shopId: string): Promise<Service[] | null> {
+  async getCachedServices(shopId: string): Promise<Service[] | null> {
     try {
       const data = await AsyncStorage.getItem(`${STORAGE_KEY_SERVICES}_${shopId}`);
       if (data) return JSON.parse(data);
@@ -477,7 +477,7 @@ export class ServiceRepository {
     await AsyncStorage.setItem(`${STORAGE_KEY_CATEGORIES}_${shopId}`, JSON.stringify(categories));
   }
 
-  private async getCachedCategories(shopId: string): Promise<ServiceCategory[] | null> {
+  async getCachedCategories(shopId: string): Promise<ServiceCategory[] | null> {
     try {
       const data = await AsyncStorage.getItem(`${STORAGE_KEY_CATEGORIES}_${shopId}`);
       if (data) return JSON.parse(data);

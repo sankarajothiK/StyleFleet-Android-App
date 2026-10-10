@@ -19,36 +19,15 @@ export class StaffRepository {
    */
   async getStaff(shopId: string): Promise<StaffMember[]> {
     try {
-      // Both reads only need the shop id, so they run together instead of one after the other
-      const [{ data, error }, { data: billItems }] = await Promise.all([
-        supabase
-          .from('staff')
-          .select('*')
-          .eq('shop_id', shopId)
-          .order('name', { ascending: true }),
-        // Staff revenue & service count from actual bills
-        supabase
-          .from('bill_items')
-          .select('staff_id, line_total_minor, quantity')
-          .eq('shop_id', shopId),
-      ]);
+      const { data, error } = await supabase
+        .from('staff')
+        .select('*')
+        .eq('shop_id', shopId)
+        .order('name', { ascending: true });
 
       if (!error && data) {
 
-        const revByStaff: Record<string, { rev: number; count: number }> = {};
-        if (billItems) {
-          for (const it of billItems) {
-            if (!it.staff_id) continue;
-            if (!revByStaff[it.staff_id]) {
-              revByStaff[it.staff_id] = { rev: 0, count: 0 };
-            }
-            revByStaff[it.staff_id].rev += (it.line_total_minor || 0);
-            revByStaff[it.staff_id].count += (it.quantity || 1);
-          }
-        }
-
         const mapped: StaffMember[] = data.map((s) => {
-          const stats = revByStaff[s.id] || { rev: 0, count: 0 };
           return {
             id: s.id,
             shop_id: s.shop_id,
@@ -60,8 +39,8 @@ export class StaffRepository {
             invitation_status: s.invitation_status || 'not_invited',
             invited_at: s.invited_at || null,
             target_amount_minor: 500000,
-            revenue_minor: stats.rev,
-            service_count: stats.count,
+            revenue_minor: 0, // per-period figures come from the bills on the Staff screen
+            service_count: 0,
             rebook_rate: '', // worked out from bills where it is shown, never invented
             rating: s.rating != null ? String(s.rating) : '5.0',
             chair_utilization: '',
@@ -497,7 +476,7 @@ export class StaffRepository {
     await AsyncStorage.setItem(`${STORAGE_KEY_STAFF}_${shopId}`, JSON.stringify(staff));
   }
 
-  private async getCachedStaff(shopId: string): Promise<StaffMember[] | null> {
+  async getCachedStaff(shopId: string): Promise<StaffMember[] | null> {
     try {
       const data = await AsyncStorage.getItem(`${STORAGE_KEY_STAFF}_${shopId}`);
       if (data) return JSON.parse(data);

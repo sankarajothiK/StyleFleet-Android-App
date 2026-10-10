@@ -424,7 +424,7 @@ export class AppointmentRepository {
     await AsyncStorage.setItem(`${STORAGE_KEY_APPTS}_${shopId}`, JSON.stringify(appts));
   }
 
-  private async getCachedAppointments(shopId: string): Promise<Appointment[] | null> {
+  async getCachedAppointments(shopId: string): Promise<Appointment[] | null> {
     try {
       const data = await AsyncStorage.getItem(`${STORAGE_KEY_APPTS}_${shopId}`);
       if (data) return JSON.parse(data);

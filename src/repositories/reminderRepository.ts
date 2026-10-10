@@ -223,7 +223,7 @@ export class ReminderRepository {
     await AsyncStorage.setItem(`${STORAGE_KEY_REMINDERS}_${shopId}`, JSON.stringify(reminders));
   }
 
-  private async getCachedReminders(shopId: string): Promise<ReminderItem[] | null> {
+  async getCachedReminders(shopId: string): Promise<ReminderItem[] | null> {
     try {
       const data = await AsyncStorage.getItem(`${STORAGE_KEY_REMINDERS}_${shopId}`);
       if (data) return JSON.parse(data);

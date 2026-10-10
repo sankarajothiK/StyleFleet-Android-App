@@ -41,7 +41,12 @@ jest.mock('../src/lib/supabase', () => {
         if (table === 'bills') {
           return {
             select: jest.fn(() => ({
-              eq: jest.fn(() => Promise.resolve({ data: [], error: null })),
+              eq: jest.fn(() => {
+                // the bills list query also sorts, so the answer must support .order()
+                const answer: any = Promise.resolve({ data: [], error: null });
+                answer.order = () => answer;
+                return answer;
+              }),
             })),
             insert: jest.fn(() => ({
               select: jest.fn(() => ({

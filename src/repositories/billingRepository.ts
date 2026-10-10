@@ -6,6 +6,7 @@ import { shopRepository } from './shopRepository';
 import { generateUuid, isValidUuid } from '../utils/uuid';
 import { assertSaved, isRemoteShop } from '../utils/persist';
 import { resolveFreeSalesLimit } from '../utils/subscriptionUtils';
+import { fetchShopBillRows } from './shopBillRows';
 
 export { isValidUuid };
 
@@ -43,17 +44,7 @@ export class BillingRepository {
    */
   async getBills(shopId: string): Promise<Bill[]> {
     try {
-      const { data, error } = await supabase
-        .from('bills')
-        .select(`
-          *,
-          customers(name),
-          staff(name),
-          bill_items(*),
-          payments(*)
-        `)
-        .eq('shop_id', shopId)
-        .order('created_at', { ascending: false });
+      const { data, error } = await fetchShopBillRows(shopId);
 
       if (!error && data) {
         let custMap = new Map<string, string>();
@@ -1252,7 +1243,7 @@ export class BillingRepository {
     await AsyncStorage.setItem(`${STORAGE_KEY_BILLS}_${shopId}`, JSON.stringify(bills));
   }
 
-  private async getCachedBills(shopId: string): Promise<Bill[] | null> {
+  async getCachedBills(shopId: string): Promise<Bill[] | null> {
     try {
       const data = await AsyncStorage.getItem(`${STORAGE_KEY_BILLS}_${shopId}`);
       if (data) return JSON.parse(data);

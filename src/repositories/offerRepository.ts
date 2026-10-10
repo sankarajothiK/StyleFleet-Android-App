@@ -157,7 +157,7 @@ export class OfferRepository {
     await AsyncStorage.setItem(`${STORAGE_KEY_OFFERS}_${shopId}`, JSON.stringify(offers));
   }
 
-  private async getCachedOffers(shopId: string): Promise<Offer[] | null> {
+  async getCachedOffers(shopId: string): Promise<Offer[] | null> {
     try {
       const data = await AsyncStorage.getItem(`${STORAGE_KEY_OFFERS}_${shopId}`);
       if (data) return JSON.parse(data);

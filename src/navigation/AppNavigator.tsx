@@ -256,6 +256,11 @@ export const AppNavigator = () => {
             setScreen((prev) => (prev === 'splash' ? prev : 'home'));
           }
 
+          // Owners see the saved copy at once. A stylist's view is limited by permissions, so it waits for the server.
+          if (cachedUser?.role !== 'stylist') {
+            hydrateFromSavedCopy(cachedShop.id).catch(() => {});
+          }
+
           // Background sync of live data (never blocks splash dismiss)
           loadShopData(cachedShop.id).catch((err) =>
             console.warn('Background sync notice:', err)
@@ -367,6 +372,35 @@ export const AppNavigator = () => {
 
   const freeSalesLimit = resolveFreeSalesLimit(currentShop?.free_sales_limit);
 
+  // Set once fresh data from the server is on screen, so a slower read of the saved copy never overwrites it
+  const freshDataLoaded = useRef(false);
+
+  const hydrateFromSavedCopy = async (shopId: string) => {
+    const [c, st, cats, sv, o, a, b, ex, rem, r] = await Promise.all([
+      customerRepository.getCachedCustomers(shopId),
+      staffRepository.getCachedStaff(shopId),
+      serviceRepository.getCachedCategories(shopId),
+      serviceRepository.getCachedServices(shopId),
+      offerRepository.getCachedOffers(shopId),
+      appointmentRepository.getCachedAppointments(shopId),
+      billingRepository.getCachedBills(shopId),
+      expenseRepository.getCachedExpenses(shopId),
+      reminderRepository.getCachedReminders(shopId),
+      reminderRepository.getRules(shopId),
+    ]);
+    if (freshDataLoaded.current) return;
+    if (c) setCustomers(c);
+    if (st) setStaff(st);
+    if (cats) setCategories(cats);
+    if (sv) setServices(sv);
+    if (o) setOffers(o);
+    if (a) setAppointments(a);
+    if (b) setBills(b);
+    if (ex) setExpenses(ex);
+    if (rem) setReminders(rem);
+    if (r) setRules(r);
+  };
+
   const refreshShopData = async () => {
     if (currentShop) await loadShopData(currentShop.id);
   };
@@ -374,6 +408,40 @@ export const AppNavigator = () => {
   const loadShopData = async (shopId: string) => {
     try {
       let activeShopId = shopId;
+      const isStylistUser = currentUser?.role === 'stylist';
+
+      const loadEverything = (id: string, perms: StylistPermissions | null) =>
+        Promise.all([
+          !isStylistUser || perms?.customers !== false
+            ? customerRepository.getCustomers(id)
+            : Promise.resolve([]),
+          staffRepository.getStaff(id),
+          serviceRepository.getCategories(id),
+          serviceRepository.getServices(id),
+          offerRepository.getOffers(id),
+          !isStylistUser || perms?.appointments !== false
+            ? appointmentRepository.getAppointments(id)
+            : Promise.resolve([]),
+          !isStylistUser || perms?.sales !== false
+            ? billingRepository.getBills(id)
+            : Promise.resolve([]),
+          !isStylistUser || perms?.expenses !== false
+            ? expenseRepository.getExpenses(id)
+            : Promise.resolve([]),
+          !isStylistUser || perms?.reminders !== false
+            ? reminderRepository.getReminders(id)
+            : Promise.resolve([]),
+          !isStylistUser || perms?.reminders !== false
+            ? reminderRepository.getRules(id)
+            : Promise.resolve([]),
+          billingRepository.getTotalSalesCreatedCount(id),
+        ]);
+
+      // Owners can see everything, so their data is requested while the shop is still being confirmed.
+      // Stylists wait: what they may load depends on their saved permissions.
+      const earlyBatch = isStylistUser ? null : loadEverything(shopId, null);
+      earlyBatch?.catch(() => {});
+
       const verified = await shopRepository.getShopById(shopId);
       if (!verified) {
         // Shop not found in DB by ID! Attempt to find by phone
@@ -394,7 +462,6 @@ export const AppNavigator = () => {
         }
       }
 
-      const isStylistUser = currentUser?.role === 'stylist';
       let perms = isStylistUser ? resolvePermissions(currentUser?.permissions) : null;
 
       if (isStylistUser && currentUser?.phone) {
@@ -412,31 +479,11 @@ export const AppNavigator = () => {
         setIsPro(Boolean(info && info.type === 'subscription' && !info.subscription?.isExpired));
       });
 
-      const [c, st, cats, sv, o, a, b, ex, rem, r, salesCount] = await Promise.all([
-        !isStylistUser || perms?.customers !== false
-          ? customerRepository.getCustomers(activeShopId)
-          : Promise.resolve([]),
-        staffRepository.getStaff(activeShopId),
-        serviceRepository.getCategories(activeShopId),
-        serviceRepository.getServices(activeShopId),
-        offerRepository.getOffers(activeShopId),
-        !isStylistUser || perms?.appointments !== false
-          ? appointmentRepository.getAppointments(activeShopId)
-          : Promise.resolve([]),
-        !isStylistUser || perms?.sales !== false
-          ? billingRepository.getBills(activeShopId)
-          : Promise.resolve([]),
-        !isStylistUser || perms?.expenses !== false
-          ? expenseRepository.getExpenses(activeShopId)
-          : Promise.resolve([]),
-        !isStylistUser || perms?.reminders !== false
-          ? reminderRepository.getReminders(activeShopId)
-          : Promise.resolve([]),
-        !isStylistUser || perms?.reminders !== false
-          ? reminderRepository.getRules(activeShopId)
-          : Promise.resolve([]),
-        billingRepository.getTotalSalesCreatedCount(activeShopId),
-      ]);
+      // Reuse the early request unless the shop turned out to be a different one
+      const [c, st, cats, sv, o, a, b, ex, rem, r, salesCount] = await (earlyBatch && activeShopId === shopId
+        ? earlyBatch
+        : loadEverything(activeShopId, perms));
+      freshDataLoaded.current = true;
       setCustomers(c);
       setStaff(st);
       setCategories(cats);
