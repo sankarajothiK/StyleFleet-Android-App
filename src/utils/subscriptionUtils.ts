@@ -218,3 +218,72 @@ export function getRemainingLaunchOfferDays(
   return Math.max(0, 30 - daysElapsed);
 }
 
+
+/** Sales allowed on the free plan before booking, billing and reports need Pro. */
+export const FREE_SALES_LIMIT = 100;
+/** The gentle warning on Home starts at this many sales (for the default limit). */
+export const FREE_SALES_WARN_AT = 80;
+
+/** The free-sales limit for a salon: its own override (shops.free_sales_limit) or the default. */
+export function resolveFreeSalesLimit(override?: number | null): number {
+  return typeof override === 'number' && Number.isFinite(override) && override >= 1
+    ? Math.floor(override)
+    : FREE_SALES_LIMIT;
+}
+
+export type FreeLimitNudge =
+  | { level: 'none' }
+  | { level: 'warn'; left: number }
+  | { level: 'limit' };
+
+/** What, if anything, Home should say about the free-plan sales limit. */
+export function getFreeLimitNudge(
+  totalSalesCount: number,
+  isPro: boolean,
+  limit: number = FREE_SALES_LIMIT
+): FreeLimitNudge {
+  if (isPro) return { level: 'none' };
+  if (totalSalesCount >= limit) return { level: 'limit' };
+  const warnAt = Math.max(1, limit - (FREE_SALES_LIMIT - FREE_SALES_WARN_AT));
+  if (totalSalesCount >= warnAt) {
+    return { level: 'warn', left: limit - totalSalesCount };
+  }
+  return { level: 'none' };
+}
+
+/**
+ * The last day of the launch offer: 30 days after the registration date (same day-counting as
+ * isWithinFirst30DaysOfRegistration). Null when the registration date is unknown.
+ */
+export function getLaunchOfferEndDate(registrationDateIso?: string | null): Date | null {
+  if (!registrationDateIso) return null;
+  const regDate = new Date(registrationDateIso);
+  if (isNaN(regDate.getTime())) return null;
+  const regUtc = normalizeDateToUtcMidnight(regDate);
+  return new Date(regUtc + 30 * 24 * 60 * 60 * 1000);
+}
+
+export interface PlanStatus {
+  state: 'pro' | 'free' | 'limit';
+  used: number;
+  total: number;
+  /** 0 to 1, how much of the free sales are used (1 for Pro) */
+  progress: number;
+}
+
+/** Where a salon stands: Pro, free with sales left, or free and out of sales. */
+export function getPlanStatus(
+  totalSalesCount: number,
+  isPro: boolean,
+  limit: number = FREE_SALES_LIMIT
+): PlanStatus {
+  const used = Math.max(0, Math.floor(totalSalesCount || 0));
+  if (isPro) return { state: 'pro', used, total: limit, progress: 1 };
+  const shown = Math.min(used, limit);
+  return {
+    state: used >= limit ? 'limit' : 'free',
+    used: shown,
+    total: limit,
+    progress: shown / limit,
+  };
+}

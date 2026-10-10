@@ -14,14 +14,19 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '../../theme/ThemeContext';
 import { useLanguage } from '../../i18n/LanguageContext';
 import { Chip } from '../../components/common/Chip';
-import { StarIcon, EditIcon, PhoneCallIcon, WhatsAppIcon } from '../../components/common/SvgIcons';
+import { StarIcon, PhoneCallIcon, WhatsAppIcon, SearchIcon, PlusIcon } from '../../components/common/SvgIcons';
+import { GlassBackdrop } from '../../components/common/GlassBackdrop';
+import { fmt } from '../../i18n/format';
+import { getGlass } from '../../theme/glass';
 import { Customer } from '../../types/domain';
 import { inr, inrFromMinor, getInitials } from '../../utils/format';
 import { CustomerManagerModal } from '../../components/customers/CustomerManagerModal';
 import { SettleDueModal } from '../../components/customers/SettleDueModal';
 import { customerRepository } from '../../repositories/customerRepository';
+import { usePullRefresh } from '../../hooks/usePullRefresh';
 
 interface CustomersScreenProps {
+  onRefresh?: () => Promise<void>;
   customers: Customer[];
   shopId?: string;
   onSelectCustomer: (customer: Customer) => void;
@@ -30,9 +35,12 @@ interface CustomersScreenProps {
   onBatchAddCustomers?: (customers: Customer[]) => void;
   onUpdateCustomer?: (customer: Customer) => void;
   onSettleDue?: (customerId: string, method?: 'cash' | 'upi', amountMinor?: number) => void;
+  /** Bulk import from phone contacts is for owners only. */
+  allowContactImport?: boolean;
 }
 
 export const CustomersScreen = ({
+  onRefresh,
   customers,
   shopId,
   onSelectCustomer,
@@ -41,12 +49,17 @@ export const CustomersScreen = ({
   onBatchAddCustomers,
   onUpdateCustomer,
   onSettleDue,
+  allowContactImport = true,
 }: CustomersScreenProps) => {
+  const pullRefresh = usePullRefresh(onRefresh);
   const { colors } = useTheme();
+  const glass = getGlass(colors.isDark);
   const { t } = useLanguage();
+  const tf = (key: string, fallback: string, vars: Record<string, string | number> = {}) =>
+    fmt(t(key, fallback), vars);
 
   const [query, setQuery] = useState('');
-  const [activeFilter, setActiveFilter] = useState<'All' | 'MVP ★' | 'Dues' | 'Inactive'>('All');
+  const [activeFilter, setActiveFilter] = useState<'All' | 'MVP ★' | 'Dues'>('All');
   const [modalVisible, setModalVisible] = useState(false);
   const [customerToEdit, setCustomerToEdit] = useState<Customer | null>(null);
   const [customerToSettle, setCustomerToSettle] = useState<Customer | null>(null);
@@ -85,48 +98,47 @@ export const CustomersScreen = ({
     const sourceList = q ? uniqueCustomers : sortedCustomers;
 
     return sourceList.filter((c) => {
-      const isCustInactive = c.is_active === false;
+      // Deleted customers stay in the database (bills and revenue keep their history) but are never listed
+      if (c.is_active === false) return false;
       if (q) {
         const matchesName = c.name.toLowerCase().includes(q);
         const matchesPhone = c.phone.includes(q) || (qDigits.length >= 3 && c.phone.includes(qDigits));
         if (!matchesName && !matchesPhone) return false;
       }
-      if (activeFilter === 'Inactive') return isCustInactive;
-      if (isCustInactive) return false;
       if (activeFilter === 'MVP ★') return c.is_starred;
       if (activeFilter === 'Dues') return c.outstanding_due_minor > 0;
       return true;
     });
   }, [uniqueCustomers, sortedCustomers, query, activeFilter]);
 
-  const handleHoldCustomer = (c: Customer) => {
-    const isCurrentlyInactive = c.is_active === false;
+  const stats = React.useMemo(() => {
+    const active = uniqueCustomers.filter((c) => c.is_active !== false);
+    const withDues = active.filter((c) => c.outstanding_due_minor > 0);
+    return {
+      clients: active.length,
+      mvps: active.filter((c) => c.is_starred).length,
+      duesCount: withDues.length,
+      duesMinor: withDues.reduce((sum, c) => sum + c.outstanding_due_minor, 0),
+    };
+  }, [uniqueCustomers]);
+
+  const handleDeleteCustomer = (c: Customer) => {
     Alert.alert(
-      isCurrentlyInactive ? 'Reactivate Customer' : 'Move Customer to Inactive',
-      isCurrentlyInactive
-        ? `Reactivate "${c.name}" so they appear in your active customer list and can be selected for new bills?`
-        : `Move "${c.name}" to Inactive?\n\nTheir past visits, spend, dues, bills, and report history will remain 100% safely preserved.`,
+      t('cuDeleteTitle', 'Delete Customer'),
+      tf('cuDeleteMsg', 'Delete "{name}"? They will be removed from your customer list. Their past bills, payments, dues and appointments stay saved, so your revenue and reports do not change.', { name: c.name }),
       [
-        { text: 'Cancel', style: 'cancel' },
+        { text: t('cancel', 'Cancel'), style: 'cancel' },
         {
-          text: isCurrentlyInactive ? 'Reactivate' : 'Move to Inactive',
-          style: isCurrentlyInactive ? 'default' : 'destructive',
+          text: t('delete', 'Delete'),
+          style: 'destructive',
           onPress: async () => {
             try {
               if (shopId) {
-                await customerRepository.setCustomerInactive(shopId, c.id, !isCurrentlyInactive);
+                await customerRepository.setCustomerInactive(shopId, c.id, true);
               }
-              if (onUpdateCustomer) {
-                onUpdateCustomer({ ...c, is_active: isCurrentlyInactive });
-              }
-              Alert.alert(
-                isCurrentlyInactive ? 'Customer Reactivated' : 'Customer Inactive',
-                isCurrentlyInactive
-                  ? `${c.name} is now active.`
-                  : `${c.name} has been moved to Inactive. All historical data is preserved.`
-              );
+              onUpdateCustomer?.({ ...c, is_active: false });
             } catch (err: any) {
-              Alert.alert('Error', err.message || 'Could not update customer status');
+              Alert.alert(t('bkNotice', 'Notice'), err.message || t('cuDeleteFail', 'Could not delete customer. Please try again.'));
             }
           },
         },
@@ -204,177 +216,107 @@ export const CustomersScreen = ({
     const cleanPhone = (c.phone || '').replace(/\D/g, '').slice(-10);
     const formattedPhone = cleanPhone.length === 10
       ? `+91 ${cleanPhone.replace(/(\d{5})(\d{5})/, '$1 $2')}`
-      : c.phone || 'No phone';
+      : c.phone || t('cuNoPhone', 'No phone');
 
     return (
       <View
         style={[
-          styles.customerRow,
-          { borderBottomColor: colors.divider },
+          styles.customerCard,
+          {
+            backgroundColor: glass.card.backgroundColor,
+            borderColor: c.is_starred ? colors.accent + '66' : glass.card.borderColor,
+          },
         ]}
       >
         <TouchableOpacity
           style={styles.customerRowMain}
           activeOpacity={0.7}
           onPress={() => onSelectCustomer(c)}
-          onLongPress={() => handleHoldCustomer(c)}
+          onLongPress={() => handleDeleteCustomer(c)}
           delayLongPress={400}
         >
           <View
             style={[
               styles.avatar,
               {
-                backgroundColor: c.is_starred
-                  ? colors.accent800
-                  : colors.neutral800,
+                backgroundColor: c.is_starred ? colors.accent800 : colors.neutral800,
+                borderColor: c.is_starred ? colors.accent : 'transparent',
               },
             ]}
           >
-            <Text
-              style={[
-                styles.avatarText,
-                {
-                  color: c.is_starred
-                    ? colors.accent100
-                    : colors.neutral200,
-                },
-              ]}
-            >
+            <Text style={[styles.avatarText, { color: c.is_starred ? colors.accent100 : colors.neutral200 }]}>
               {getInitials(c.name)}
             </Text>
           </View>
 
           <View style={styles.customerDetails}>
             <View style={styles.nameRow}>
-              <Text
-                numberOfLines={1}
-                ellipsizeMode="tail"
-                style={[styles.customerName, { color: colors.text }]}
-              >
+              <Text numberOfLines={1} ellipsizeMode="tail" style={[styles.customerName, { color: colors.text }]}>
                 {c.name}
               </Text>
-              {c.is_starred ? (
-                <Text style={[styles.badge, { color: colors.accent }]}>
-                  ★ MVP
-                </Text>
-              ) : null}
-              {c.is_active === false ? (
-                <Text style={[styles.badge, { color: '#9CA3AF', borderColor: '#4B5563', borderWidth: 1, paddingHorizontal: 5, borderRadius: 4 }]}>
-                  Inactive
-                </Text>
-              ) : null}
+              <TouchableOpacity
+                onPress={() => onToggleStar(c.id)}
+                activeOpacity={0.7}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                accessibilityLabel={c.is_starred ? 'Unstar customer' : 'Star customer'}
+              >
+                <StarIcon
+                  size={15}
+                  color={c.is_starred ? colors.accent : colors.textSubtle}
+                  fill={c.is_starred ? colors.accent : 'none'}
+                />
+              </TouchableOpacity>
             </View>
-
-            {/* Stored Customer Phone Number */}
-            <Text
-              numberOfLines={1}
-              style={[styles.phoneText, { color: colors.textDim }]}
-            >
+            <Text numberOfLines={1} style={[styles.phoneText, { color: colors.textDim }]}>
               {formattedPhone}
             </Text>
-
-            <Text
-              numberOfLines={1}
-              style={[styles.metaText, { color: colors.textSubtle }]}
-            >
-              {`${c.visits_count} visits${
+            <Text numberOfLines={1} style={[styles.metaText, { color: colors.textSubtle }]}>
+              {`${tf('cuVisits', '{n} visits', { n: c.visits_count })}${
                 c.last_visit_date && !c.last_visit_date.includes('Invalid') && !c.last_visit_date.includes('NaN')
-                  ? ` · last ${c.last_visit_date}`
+                  ? ` · ${tf('cuLast', 'last {d}', { d: c.last_visit_date })}`
                   : ''
-              } · ${c.preferred_stylist_name || 'Stylist'}`}
+              }`}
             </Text>
           </View>
-        </TouchableOpacity>
 
-        {/* Right Section: Spend and Actions */}
-        <View style={styles.rightSection}>
-          <View style={styles.spendColumn}>
-            <TouchableOpacity
-              activeOpacity={0.7}
-              onPress={() => onSelectCustomer(c)}
-              style={{ alignItems: 'flex-end' }}
-            >
-              <Text style={[styles.spendText, { color: colors.text }]}>
-                {inrFromMinor(c.lifetime_spend_minor)}
-              </Text>
-            </TouchableOpacity>
+          <View style={{ alignItems: 'flex-end', gap: 4 }}>
+            <Text style={[styles.spendText, { color: colors.text }]}>{inrFromMinor(c.lifetime_spend_minor)}</Text>
             {hasDue ? (
               <TouchableOpacity
                 activeOpacity={0.8}
                 onPress={() => setCustomerToSettle(c)}
-                style={[
-                  styles.settlePill,
-                  { backgroundColor: colors.accent900, borderColor: colors.accent },
-                ]}
+                style={[styles.settlePill, { backgroundColor: 'rgba(239, 68, 68, 0.12)', borderColor: 'rgba(239, 68, 68, 0.5)' }]}
               >
-                <Text style={[styles.settlePillText, { color: colors.accent }]}>
-                  Settle {inrFromMinor(c.outstanding_due_minor)}
-                  {c.due_start_date && !c.due_start_date.includes('Invalid') && !c.due_start_date.includes('NaN')
-                    ? ` (${c.due_start_date})`
-                    : ''}
+                <Text style={[styles.settlePillText, { color: '#F87171' }]}>
+                  {t('cuSettle', 'Settle')} {inrFromMinor(c.outstanding_due_minor)}
                 </Text>
               </TouchableOpacity>
             ) : (
-              <Text
-                style={[styles.dueText, { color: colors.textSubtle }]}
-              >
-                {dueLabel}
-              </Text>
+              <Text style={[styles.dueText, { color: '#10B981' }]}>✓ {dueLabel}</Text>
             )}
           </View>
+        </TouchableOpacity>
 
-          {/* Quick Actions: Call, WhatsApp, Star, Edit */}
-          <View style={styles.actionsColumn}>
-            {/* Call Action Icon Button */}
-            <TouchableOpacity
-              onPress={() => handleCallCustomer(c.phone)}
-              style={[
-                styles.actionIconBtn,
-                {
-                  backgroundColor: colors.surface,
-                  borderColor: colors.divider,
-                },
-              ]}
-              activeOpacity={0.7}
-              hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-              accessibilityLabel={`Call ${c.name}`}
-            >
-              <PhoneCallIcon size={14} color="#10B981" />
-            </TouchableOpacity>
-
-            {/* WhatsApp Action Icon Button */}
-            <TouchableOpacity
-              onPress={() => handleWhatsAppCustomer(c.phone, c.name)}
-              style={[
-                styles.actionIconBtn,
-                {
-                  backgroundColor: colors.surface,
-                  borderColor: colors.divider,
-                },
-              ]}
-              activeOpacity={0.7}
-              hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-              accessibilityLabel={`WhatsApp ${c.name}`}
-            >
-              <WhatsAppIcon size={15} color="#25D366" />
-            </TouchableOpacity>
-
-            {/* Existing Star Icon */}
-            <TouchableOpacity
-              onPress={() => onToggleStar(c.id)}
-              style={styles.starButton}
-              activeOpacity={0.7}
-              hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-              accessibilityLabel={c.is_starred ? 'Unstar customer' : 'Star customer'}
-            >
-              <StarIcon
-                size={17}
-                color={c.is_starred ? colors.accent : colors.textSubtle}
-                fill={c.is_starred ? colors.accent : 'none'}
-              />
-            </TouchableOpacity>
-
-          </View>
+        {/* Quick actions: star, call, WhatsApp */}
+        <View style={styles.actionsColumn}>
+          <TouchableOpacity
+            onPress={() => handleCallCustomer(c.phone)}
+            style={[styles.actionIconBtn, { backgroundColor: 'rgba(16, 185, 129, 0.14)', borderColor: 'rgba(16, 185, 129, 0.4)' }]}
+            activeOpacity={0.7}
+            hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
+            accessibilityLabel={`Call ${c.name}`}
+          >
+            <PhoneCallIcon size={13} color="#10B981" />
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => handleWhatsAppCustomer(c.phone, c.name)}
+            style={[styles.actionIconBtn, { backgroundColor: 'rgba(37, 211, 102, 0.14)', borderColor: 'rgba(37, 211, 102, 0.4)' }]}
+            activeOpacity={0.7}
+            hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
+            accessibilityLabel={`WhatsApp ${c.name}`}
+          >
+            <WhatsAppIcon size={14} color="#25D366" />
+          </TouchableOpacity>
         </View>
       </View>
     );
@@ -382,38 +324,78 @@ export const CustomersScreen = ({
 
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.bg }]}>
+      <GlassBackdrop isDark={colors.isDark} />
       <View style={styles.header}>
         <View style={styles.headerTitleRow}>
-          <Text style={[styles.title, { color: colors.text }]}>{t('customers', 'Customers')}</Text>
-          <Text style={[styles.countText, { color: colors.textDim }]}>
-            {uniqueCustomers.length} {t('onFile', 'on file')}
-          </Text>
+          <View>
+            <Text style={[styles.title, { color: colors.text }]}>{t('customers', 'Customers')}</Text>
+            <Text style={[styles.countText, { color: colors.textDim }]}>
+              {uniqueCustomers.length} {t('onFile', 'on file')}
+            </Text>
+          </View>
           <TouchableOpacity
-            style={styles.addButton}
+            style={[styles.addButton, { backgroundColor: colors.accent }]}
             onPress={handleOpenAddModal}
-            activeOpacity={0.7}
+            activeOpacity={0.8}
           >
-            <Text style={[styles.addButtonText, { color: colors.accent }]}>{t('add', '+ Add')}</Text>
+            <PlusIcon size={14} color="#161826" />
+            <Text style={styles.addButtonText}>{t('add', 'Add').replace(/^\+\s*/, '')}</Text>
           </TouchableOpacity>
         </View>
 
-        <TextInput
+        {/* Live summary computed from the customer list */}
+        <View style={styles.statsRow}>
+          <View style={[styles.statTile, { backgroundColor: glass.card.backgroundColor, borderColor: glass.card.borderColor }]}>
+            <Text numberOfLines={1} adjustsFontSizeToFit style={[styles.statValue, { color: colors.text }]}>{stats.clients}</Text>
+            <Text style={[styles.statLabel, { color: colors.textDim }]} numberOfLines={1}>{t('cuClients', 'CLIENTS')}</Text>
+          </View>
+          <View style={[styles.statTile, { backgroundColor: glass.card.backgroundColor, borderColor: glass.card.borderColor }]}>
+            <Text numberOfLines={1} adjustsFontSizeToFit style={[styles.statValue, { color: colors.accent }]}>★ {stats.mvps}</Text>
+            <Text style={[styles.statLabel, { color: colors.textDim }]} numberOfLines={1}>{t('cuMvps', 'MVPs')}</Text>
+          </View>
+          <TouchableOpacity
+            activeOpacity={0.8}
+            onPress={() => setActiveFilter('Dues')}
+            style={[
+              styles.statTile,
+              {
+                backgroundColor: stats.duesMinor > 0 ? 'rgba(239, 68, 68, 0.10)' : glass.card.backgroundColor,
+                borderColor: stats.duesMinor > 0 ? 'rgba(239, 68, 68, 0.45)' : glass.card.borderColor,
+              },
+            ]}
+          >
+            <Text numberOfLines={1} adjustsFontSizeToFit style={[styles.statValue, { color: stats.duesMinor > 0 ? '#F87171' : colors.text }]}>
+              {inrFromMinor(stats.duesMinor)}
+            </Text>
+            <Text numberOfLines={1} style={[styles.statLabel, { color: colors.textDim }]}>
+              {t('cuDues', 'DUES')}{stats.duesCount > 0 ? ` · ${stats.duesCount}` : ''}
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        <View
           style={[
-            styles.searchInput,
-            {
-              backgroundColor: colors.card,
-              borderColor: colors.divider,
-              color: colors.text,
-            },
+            styles.searchBox,
+            { backgroundColor: glass.card.backgroundColor, borderColor: glass.card.borderColor },
           ]}
-          placeholder={t('searchNameOrNumber', 'Search name or number')}
-          placeholderTextColor={colors.placeholder || colors.textDim}
-          value={query}
-          onChangeText={setQuery}
-        />
+        >
+          <SearchIcon size={16} color={colors.textDim} />
+          <TextInput
+            style={[styles.searchInput, { color: colors.text }]}
+            placeholder={t('searchNameOrNumber', 'Search name or number')}
+            placeholderTextColor={colors.placeholder || colors.textDim}
+            value={query}
+            onChangeText={setQuery}
+          />
+          {query.length > 0 && (
+            <TouchableOpacity onPress={() => setQuery('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <Text style={{ color: colors.textDim }}>✕</Text>
+            </TouchableOpacity>
+          )}
+        </View>
 
         <View style={styles.filtersRow}>
-          {(['All', 'MVP ★', 'Dues', 'Inactive'] as const).map((filter) => (
+          {(['All', 'MVP ★', 'Dues'] as const).map((filter) => (
             <Chip
               key={filter}
               label={
@@ -421,9 +403,7 @@ export const CustomersScreen = ({
                   ? t('all', 'All')
                   : filter === 'MVP ★'
                   ? t('mvp', 'MVP ★')
-                  : filter === 'Dues'
-                  ? t('dues', 'Dues')
-                  : 'Inactive'
+                  : t('dues', 'Dues')
               }
               active={activeFilter === filter}
               onPress={() => setActiveFilter(filter)}
@@ -433,6 +413,7 @@ export const CustomersScreen = ({
       </View>
 
       <FlatList
+        refreshControl={pullRefresh}
         data={filtered}
         keyExtractor={(item) => item.id}
         renderItem={renderCustomerItem}
@@ -454,11 +435,6 @@ export const CustomersScreen = ({
             </Text>
           </View>
         }
-        ListFooterComponent={
-          <Text style={[styles.bottomHint, { color: colors.textSubtle }]}>
-            {t('starredHint', 'Starred customers are your MVPs. They feed the WhatsApp segment of the same name.')}
-          </Text>
-        }
       />
 
       <CustomerManagerModal
@@ -470,6 +446,7 @@ export const CustomersScreen = ({
         onAddSuccess={(newCust) => onAddCustomer?.(newCust)}
         onBatchSuccess={(newCusts) => onBatchAddCustomers?.(newCusts)}
         onEditSuccess={(updated) => onUpdateCustomer?.(updated)}
+        allowContactImport={allowContactImport}
       />
 
       <SettleDueModal
@@ -496,30 +473,65 @@ const styles = StyleSheet.create({
   },
   headerTitleRow: {
     flexDirection: 'row',
-    alignItems: 'baseline',
-    gap: 8,
+    alignItems: 'center',
+    justifyContent: 'space-between',
   },
   title: {
-    fontSize: 23,
-    fontWeight: '600',
-    letterSpacing: -0.4,
+    fontSize: 26,
+    fontWeight: '700',
+    letterSpacing: -0.5,
   },
   countText: {
-    fontSize: 13,
+    fontSize: 12.5,
+    marginTop: 1,
   },
   addButton: {
-    marginLeft: 'auto',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 16,
+    minHeight: 38,
+    borderRadius: 19,
   },
   addButtonText: {
     fontSize: 14,
-    fontWeight: '500',
+    fontWeight: '700',
+    color: '#161826',
+  },
+  statsRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 14,
+  },
+  statTile: {
+    flex: 1,
+    borderWidth: 1,
+    borderRadius: 14,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+  },
+  statValue: {
+    fontSize: 17,
+    fontWeight: '700',
+  },
+  statLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 0.8,
+    marginTop: 2,
+  },
+  searchBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 12,
+    minHeight: 44,
+    borderWidth: 1,
+    borderRadius: 14,
+    paddingHorizontal: 12,
   },
   searchInput: {
-    marginTop: 12,
-    height: 42,
-    borderWidth: 1,
-    borderRadius: 10,
-    paddingHorizontal: 12,
+    flex: 1,
     fontSize: 14.5,
   },
   filtersRow: {
@@ -529,13 +541,32 @@ const styles = StyleSheet.create({
   },
   listContent: {
     paddingHorizontal: 16,
+    paddingTop: 4,
     paddingBottom: 100,
   },
-  customerRow: {
+  customerCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 12,
-    borderBottomWidth: 1,
+    gap: 8,
+    borderWidth: 1,
+    borderRadius: 14,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    marginBottom: 6,
+  },
+  cardFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 6,
+    paddingTop: 6,
+    borderTopWidth: 1,
+  },
+  mvpPill: {
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 6,
+    borderWidth: 1,
   },
   customerRowMain: {
     flex: 1,
@@ -544,9 +575,10 @@ const styles = StyleSheet.create({
     gap: 11,
   },
   avatar: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    borderWidth: 2,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -564,8 +596,8 @@ const styles = StyleSheet.create({
     flexShrink: 1,
   },
   customerName: {
-    fontSize: 15,
-    fontWeight: '500',
+    fontSize: 14.5,
+    fontWeight: '600',
     flexShrink: 1,
   },
   badge: {
@@ -573,14 +605,14 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   phoneText: {
-    fontSize: 12.5,
+    fontSize: 12,
     fontWeight: '500',
-    marginTop: 2,
+    marginTop: 1,
     letterSpacing: 0.2,
   },
   metaText: {
-    fontSize: 12.5,
-    marginTop: 2,
+    fontSize: 11.5,
+    marginTop: 1,
   },
   rightSection: {
     alignItems: 'flex-end',
@@ -592,26 +624,25 @@ const styles = StyleSheet.create({
     paddingRight: 6,
   },
   spendText: {
-    fontSize: 14,
-    fontWeight: '500',
+    fontSize: 15,
+    fontWeight: '700',
   },
   dueText: {
-    fontSize: 11.5,
-    marginTop: 2,
+    fontSize: 12,
+    fontWeight: '600',
   },
   starButton: {
     padding: 6,
   },
   actionsColumn: {
-    flexDirection: 'row',
+    flexDirection: 'column',
     alignItems: 'center',
     gap: 4,
-    marginTop: 4,
   },
   actionIconBtn: {
     width: 28,
     height: 28,
-    borderRadius: 7,
+    borderRadius: 14,
     borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
@@ -620,11 +651,10 @@ const styles = StyleSheet.create({
     padding: 6,
   },
   settlePill: {
-    paddingHorizontal: 7,
+    paddingHorizontal: 9,
     paddingVertical: 3,
-    borderRadius: 8,
+    borderRadius: 9,
     borderWidth: 1,
-    marginTop: 2,
   },
   settlePillText: {
     fontSize: 11,

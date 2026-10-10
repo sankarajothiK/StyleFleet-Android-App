@@ -16,10 +16,13 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '../../theme/ThemeContext';
+import { GlassBackdrop } from '../../components/common/GlassBackdrop';
+import { getGlass } from '../../theme/glass';
 import { useLanguage } from '../../i18n/LanguageContext';
 import { SUPPORTED_LANGUAGES } from '../../i18n/translations';
 import { Period, Bill, Expense, SocialLinks, StylistPermissions } from '../../types/domain';
 import { financialService } from '../../services/financialService';
+import { fmt } from '../../i18n/format';
 import { inrFromMinor } from '../../utils/format';
 import { supportRepository, SupportMessageAnswer } from '../../repositories/supportRepository';
 import { shopRepository } from '../../repositories/shopRepository';
@@ -47,8 +50,11 @@ import {
 } from '../../components/common/SvgIcons';
 import { ChangePhoneModal } from '../../components/accounts/ChangePhoneModal';
 import { radii } from '../../theme/spacing';
+import { PlanStatusCard } from '../../components/subscription/PlanStatusCard';
+import { usePullRefresh } from '../../hooks/usePullRefresh';
 
 interface AccountsScreenProps {
+  onRefresh?: () => Promise<void>;
   openRemindersCount: number;
   bills?: Bill[];
   expenses?: Expense[];
@@ -72,12 +78,19 @@ interface AccountsScreenProps {
       | 'reports'
   ) => void;
   onUpgradePlan?: () => void;
+  /** Plan status for the "Your plan" card (owners only) */
+  isPro?: boolean;
+  /** How many sales the salon has created in total (what the free limit counts, including deleted ones) */
+  planSalesCount?: number;
+  /** Free-plan sales limit for this salon */
+  freeSalesLimit?: number;
   onAccountDeleted?: () => void;
   onSignOut?: () => void;
   onPhoneUpdated?: (newPhone: string) => void;
 }
 
 export const AccountsScreen = ({
+  onRefresh,
   openRemindersCount,
   bills = [],
   expenses = [],
@@ -91,16 +104,19 @@ export const AccountsScreen = ({
   onUpdateSocialLinks,
   onNavigate,
   onUpgradePlan,
+  isPro = false,
+  planSalesCount = 0,
+  freeSalesLimit,
   onAccountDeleted,
   onSignOut,
   onPhoneUpdated,
 }: AccountsScreenProps) => {
-  const { colors, themeMode, setThemeMode } = useTheme();
+  const pullRefresh = usePullRefresh(onRefresh);
+  const { colors } = useTheme();
   const { language, setLanguage, t } = useLanguage();
   const [period, setPeriod] = useState<Period>('Day');
 
   // Modals state
-  const [showThemeModal, setShowThemeModal] = useState(false);
   const [showLangModal, setShowLangModal] = useState(false);
   const [showPrivacyModal, setShowPrivacyModal] = useState(false);
   const [showFaqModal, setShowFaqModal] = useState(false);
@@ -411,6 +427,7 @@ export const AccountsScreen = ({
 
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.bg }]}>
+      <GlassBackdrop isDark={colors.isDark} />
       <View style={styles.header}>
         <View style={styles.headerTitleRow}>
           <Text style={[styles.title, { color: colors.text }]}>{t('accounts')}</Text>
@@ -443,7 +460,7 @@ export const AccountsScreen = ({
                     },
                   ]}
                 >
-                  {p === 'Day' ? t('day') : p === 'Week' ? t('week') : t('month')}
+                  {p === 'Day' ? t('today', 'Today') : p === 'Week' ? t('week') : t('month')}
                 </Text>
               </TouchableOpacity>
             );
@@ -451,7 +468,7 @@ export const AccountsScreen = ({
         </View>
       </View>
 
-      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false} refreshControl={pullRefresh}>
         {/* Net Profit Summary */}
         <View style={styles.pnlHeaderRow}>
           <View>
@@ -480,14 +497,14 @@ export const AccountsScreen = ({
             style={[
               styles.statCard,
               {
-                backgroundColor: colors.surface,
+                ...getGlass(colors.isDark).card,
                 borderColor: cardBorderColor,
                 borderWidth: cardBorderWidth,
               },
             ]}
           >
             <Text style={[styles.statLabel, { color: colors.textDim }]}>{t('totalIncome')}</Text>
-            <Text style={[styles.statValue, { color: colors.text }]}>
+            <Text numberOfLines={1} adjustsFontSizeToFit style={[styles.statValue, { color: colors.text }]}>
               {inrFromMinor(pnl.income_minor)}
             </Text>
             <Text style={[styles.statSub, { color: colors.textMuted }]}>
@@ -499,25 +516,28 @@ export const AccountsScreen = ({
             style={[
               styles.statCard,
               {
-                backgroundColor: colors.surface,
+                ...getGlass(colors.isDark).card,
                 borderColor: cardBorderColor,
                 borderWidth: cardBorderWidth,
               },
             ]}
           >
             <Text style={[styles.statLabel, { color: colors.textDim }]}>{t('totalExpenses')}</Text>
-            <Text style={[styles.statValue, { color: colors.error }]}>
+            <Text numberOfLines={1} adjustsFontSizeToFit style={[styles.statValue, { color: colors.error }]}>
               {inrFromMinor(pnl.expense_minor)}
             </Text>
             <Text style={[styles.statSub, { color: colors.textMuted }]}>
               {expenses.length} entries
+              {pnl.excluded_minor > 0
+                ? ` · ${fmt(t('exNotCounted', '{amt} not counted in profit'), { amt: inrFromMinor(pnl.excluded_minor) })}`
+                : ''}
             </Text>
           </View>
         </View>
 
         {/* Where the money went (Expenses breakdown) */}
         {pnl.categories.length > 0 ? (
-          <View style={[styles.card, { backgroundColor: colors.surface }]}>
+          <View style={[styles.card, { ...getGlass(colors.isDark).card, borderWidth: 1 }]}>
             <Text style={[styles.cardHeader, { color: colors.textDim }]}>
               {t('whereMoneyWent', 'WHERE THE MONEY WENT')}
             </Text>
@@ -571,6 +591,11 @@ export const AccountsScreen = ({
           </View>
         ) : null}
 
+        {/* Your plan: owners only, since only the owner can upgrade */}
+        {onUpgradePlan && currentUserRole !== 'stylist' ? (
+          <PlanStatusCard isPro={isPro} totalSalesCount={planSalesCount} freeSalesLimit={freeSalesLimit} onUpgrade={onUpgradePlan} />
+        ) : null}
+
         {/* Manage Tools Header */}
         <Text style={[styles.manageTitle, { color: colors.textDim }]}>
           {t('operationsAndTools', 'OPERATIONS & TOOLS')}
@@ -587,35 +612,12 @@ export const AccountsScreen = ({
               style={[
                 styles.toolCard,
                 {
-                  backgroundColor: colors.surface,
+                  ...getGlass(colors.isDark).card,
                   borderColor: cardBorderColor,
                   borderWidth: cardBorderWidth,
                 },
               ]}
             >
-              {/* LEFT SIDE: Wordings (Title, Subtitle, Badge) */}
-              <View style={styles.toolContentCol}>
-                <View style={styles.toolTitleRow}>
-                  <Text
-                    numberOfLines={1}
-                    style={[styles.toolTitle, { color: colors.text }]}
-                  >
-                    {t.label}
-                  </Text>
-                  {t.badge ? (
-                    <View style={[styles.toolBadge, { backgroundColor: colors.accent900, borderColor: colors.accent, borderWidth: 1 }]}>
-                      <Text style={[styles.toolBadgeText, { color: colors.accent200 }]}>
-                        {t.badge}
-                      </Text>
-                    </View>
-                  ) : null}
-                </View>
-                <Text numberOfLines={1} style={[styles.toolSub, { color: colors.textDim }]}>
-                  {t.sub}
-                </Text>
-              </View>
-
-              {/* RIGHT SIDE: Icon */}
               <View
                 style={[
                   styles.toolIconContainer,
@@ -626,7 +628,15 @@ export const AccountsScreen = ({
                 ]}
               >
                 {t.icon}
+                {t.badge ? (
+                  <View style={[styles.toolBadgeFloat, { backgroundColor: colors.accent }]}>
+                    <Text style={styles.toolBadgeFloatText}>{t.badge}</Text>
+                  </View>
+                ) : null}
               </View>
+              <Text numberOfLines={2} style={[styles.toolTitle, { color: colors.text, flex: 1 }]}>
+                {t.label}
+              </Text>
             </TouchableOpacity>
           ))}
         </View>
@@ -638,7 +648,7 @@ export const AccountsScreen = ({
           {t('settingsAndHelp')}
         </Text>
 
-        <View style={[styles.settingsBox, { backgroundColor: colors.surface, borderColor: colors.divider }]}>
+        <View style={[styles.settingsBox, { ...getGlass(colors.isDark).card, borderWidth: 1 }]}>
           {/* App Language */}
           <TouchableOpacity
             style={[styles.settingsRow, { borderBottomColor: colors.divider }]}
@@ -646,30 +656,9 @@ export const AccountsScreen = ({
             activeOpacity={0.7}
           >
             <View style={{ flex: 1, paddingRight: 8 }}>
-              <Text numberOfLines={1} style={[styles.settingsRowTitle, { color: colors.text }]}>{t('appLanguage')}</Text>
-              <Text numberOfLines={1} style={[styles.settingsRowSub, { color: colors.accent }]}>
+              <Text numberOfLines={2} style={[styles.settingsRowTitle, { color: colors.text }]}>{t('appLanguage')}</Text>
+              <Text numberOfLines={2} style={[styles.settingsRowSub, { color: colors.accent }]}>
                 {SUPPORTED_LANGUAGES.find((l) => l.code === language)?.nativeLabel || 'English'}
-              </Text>
-            </View>
-            <Text style={{ color: colors.accent, fontSize: 18 }}>›</Text>
-          </TouchableOpacity>
-
-          {/* Theme Switch: ☀️ / ☾ Theme */}
-          <TouchableOpacity
-            style={[styles.settingsRow, { borderBottomColor: colors.divider }]}
-            onPress={() => setShowThemeModal(true)}
-            activeOpacity={0.7}
-          >
-            <View style={{ flex: 1, paddingRight: 8 }}>
-              <Text numberOfLines={1} style={[styles.settingsRowTitle, { color: colors.text }]}>
-                {themeMode === 'light' ? '☀️' : '🌙'} {t('theme', 'Theme')}
-              </Text>
-              <Text numberOfLines={1} style={[styles.settingsRowSub, { color: colors.accent }]}>
-                {themeMode === 'dark'
-                  ? t('darkMode', 'Dark Mode')
-                  : themeMode === 'light'
-                  ? t('lightMode', 'Light Mode')
-                  : t('systemDefault', 'System Default')}
               </Text>
             </View>
             <Text style={{ color: colors.accent, fontSize: 18 }}>›</Text>
@@ -682,10 +671,10 @@ export const AccountsScreen = ({
             activeOpacity={0.7}
           >
             <View style={{ flex: 1, paddingRight: 8 }}>
-              <Text numberOfLines={1} style={[styles.settingsRowTitle, { color: colors.text }]}>
+              <Text numberOfLines={2} style={[styles.settingsRowTitle, { color: colors.text }]}>
                 {t('socialLinks', 'Social Media Links')}
               </Text>
-              <Text numberOfLines={1} style={[styles.settingsRowSub, { color: activeSocialCount > 0 ? colors.accent : colors.textDim }]}>
+              <Text numberOfLines={2} style={[styles.settingsRowSub, { color: activeSocialCount > 0 ? colors.accent : colors.textDim }]}>
                 {activeSocialCount > 0
                   ? `${activeSocialCount} ${t('linksAdded', 'links added')}`
                   : t('socialLinksSub', 'Add Instagram, Facebook, YouTube, Website')}
@@ -701,10 +690,10 @@ export const AccountsScreen = ({
             activeOpacity={0.7}
           >
             <View style={{ flex: 1, paddingRight: 8 }}>
-              <Text numberOfLines={1} style={[styles.settingsRowTitle, { color: colors.text }]}>
+              <Text numberOfLines={2} style={[styles.settingsRowTitle, { color: colors.text }]}>
                 {t('appReview', 'Rate & Review StyleFleet')}
               </Text>
-              <Text numberOfLines={1} style={[styles.settingsRowSub, { color: colors.textDim }]}>
+              <Text numberOfLines={2} style={[styles.settingsRowSub, { color: colors.textDim }]}>
                 {t('appReviewSub', 'Share your experience on Play Store / App Store')}
               </Text>
             </View>
@@ -718,10 +707,10 @@ export const AccountsScreen = ({
             activeOpacity={0.7}
           >
             <View style={{ flex: 1, paddingRight: 8 }}>
-              <Text numberOfLines={1} style={[styles.settingsRowTitle, { color: colors.text }]}>
+              <Text numberOfLines={2} style={[styles.settingsRowTitle, { color: colors.text }]}>
                 {t('helpDesk')}
               </Text>
-              <Text numberOfLines={1} style={[styles.settingsRowSub, { color: colors.textDim }]}>
+              <Text numberOfLines={2} style={[styles.settingsRowSub, { color: colors.textDim }]}>
                 {t('helpDeskSub', 'Submit an inquiry or view answers from support')}
               </Text>
             </View>
@@ -743,10 +732,10 @@ export const AccountsScreen = ({
             activeOpacity={0.7}
           >
             <View style={{ flex: 1, paddingRight: 8 }}>
-              <Text numberOfLines={1} style={[styles.settingsRowTitle, { color: colors.text, fontWeight: '600' }]}>
+              <Text numberOfLines={2} style={[styles.settingsRowTitle, { color: colors.text, fontWeight: '600' }]}>
                 {t('accountManagement', 'Account Management')}
               </Text>
-              <Text numberOfLines={1} style={[styles.settingsRowSub, { color: colors.textDim }]}>
+              <Text numberOfLines={2} style={[styles.settingsRowSub, { color: colors.textDim }]}>
                 {t('accountManagementSub', 'Privacy policy, FAQ, sign out & account closure')}
               </Text>
             </View>
@@ -767,10 +756,10 @@ export const AccountsScreen = ({
                 activeOpacity={0.7}
               >
                 <View style={{ flex: 1, paddingRight: 8 }}>
-                  <Text numberOfLines={1} style={[styles.nestedRowTitle, { color: colors.text }]}>
+                  <Text numberOfLines={3} style={[styles.nestedRowTitle, { color: colors.text }]}>
                     {t('privacyPolicy', 'Privacy Policy')}
                   </Text>
-                  <Text numberOfLines={1} style={[styles.nestedRowSub, { color: colors.textDim }]}>
+                  <Text numberOfLines={3} style={[styles.nestedRowSub, { color: colors.textDim }]}>
                     {t('privacyPolicySub', 'Customer data privacy and security terms')}
                   </Text>
                 </View>
@@ -784,10 +773,10 @@ export const AccountsScreen = ({
                 activeOpacity={0.7}
               >
                 <View style={{ flex: 1, paddingRight: 8 }}>
-                  <Text numberOfLines={1} style={[styles.nestedRowTitle, { color: colors.text }]}>
+                  <Text numberOfLines={3} style={[styles.nestedRowTitle, { color: colors.text }]}>
                     {t('faq', 'Frequently Asked Questions (FAQ)')}
                   </Text>
-                  <Text numberOfLines={1} style={[styles.nestedRowSub, { color: colors.textDim }]}>
+                  <Text numberOfLines={3} style={[styles.nestedRowSub, { color: colors.textDim }]}>
                     {t('faqSub', 'Billing, backups, GST and staff queries')}
                   </Text>
                 </View>
@@ -801,10 +790,10 @@ export const AccountsScreen = ({
                 activeOpacity={0.7}
               >
                 <View style={{ flex: 1, paddingRight: 8 }}>
-                  <Text numberOfLines={1} style={[styles.nestedRowTitle, { color: colors.text }]}>
+                  <Text numberOfLines={3} style={[styles.nestedRowTitle, { color: colors.text }]}>
                     {t('changePhoneNumber', 'Change Phone Number')}
                   </Text>
-                  <Text numberOfLines={1} style={[styles.nestedRowSub, { color: colors.textDim }]}>
+                  <Text numberOfLines={3} style={[styles.nestedRowSub, { color: colors.textDim }]}>
                     {t('changePhoneNumberSub', 'Verify with OTP and update account mobile number')}
                   </Text>
                 </View>
@@ -832,10 +821,10 @@ export const AccountsScreen = ({
                   activeOpacity={0.7}
                 >
                   <View style={{ flex: 1, paddingRight: 8 }}>
-                    <Text numberOfLines={1} style={[styles.nestedRowTitle, { color: colors.text }]}>
+                    <Text numberOfLines={3} style={[styles.nestedRowTitle, { color: colors.text }]}>
                       {t('signOut', 'Sign out')}
                     </Text>
-                    <Text numberOfLines={1} style={[styles.nestedRowSub, { color: colors.textDim }]}>
+                    <Text numberOfLines={3} style={[styles.nestedRowSub, { color: colors.textDim }]}>
                       {t('signOutSub', 'Exit session on this device')}
                     </Text>
                   </View>
@@ -850,10 +839,10 @@ export const AccountsScreen = ({
                 activeOpacity={0.7}
               >
                 <View style={{ flex: 1, paddingRight: 8 }}>
-                  <Text numberOfLines={1} style={[styles.nestedRowTitle, { color: colors.error }]}>
+                  <Text numberOfLines={3} style={[styles.nestedRowTitle, { color: colors.error }]}>
                     {t('deleteAccount', 'Permanently Delete Account')}
                   </Text>
-                  <Text numberOfLines={1} style={[styles.nestedRowSub, { color: colors.textDim }]}>
+                  <Text numberOfLines={3} style={[styles.nestedRowSub, { color: colors.textDim }]}>
                     {t('deleteAccountSub', 'Wipe salon database records and close account')}
                   </Text>
                 </View>
@@ -1122,82 +1111,6 @@ export const AccountsScreen = ({
       </Modal>
 
       {/* ---------------------------------------------------- */}
-      {/* THEME SELECTION MODAL                                */}
-      {/* ---------------------------------------------------- */}
-      <Modal visible={showThemeModal} animationType="slide" transparent>
-        <View style={styles.modalOverlay}>
-          <View style={[styles.modalCard, { backgroundColor: colors.surface, borderColor: colors.divider }]}>
-            <View style={styles.modalHeader}>
-              <Text style={[styles.modalTitle, { color: colors.text }]}>
-                {t('selectTheme', 'Select Theme')}
-              </Text>
-              <TouchableOpacity onPress={() => setShowThemeModal(false)}>
-                <Text style={{ color: colors.accent, fontSize: 16 }}>{t('close', 'Close')}</Text>
-              </TouchableOpacity>
-            </View>
-            <View style={{ marginTop: 14 }}>
-              {[
-                {
-                  id: 'dark' as const,
-                  label: t('darkMode', 'Dark Mode'),
-                  sub: 'Default luxury midnight blue & gold palette',
-                  icon: '🌙',
-                },
-                {
-                  id: 'light' as const,
-                  label: t('lightMode', 'Light Mode'),
-                  sub: 'Warm cream, soft beige & crisp contrast',
-                  icon: '☀️',
-                },
-                {
-                  id: 'system' as const,
-                  label: t('systemDefault', 'System Default'),
-                  sub: 'Follow device appearance setting',
-                  icon: '🌓',
-                },
-              ].map((item) => {
-                const isSelected = themeMode === item.id;
-                return (
-                  <TouchableOpacity
-                    key={item.id}
-                    onPress={async () => {
-                      await setThemeMode(item.id);
-                      setShowThemeModal(false);
-                    }}
-                    activeOpacity={0.7}
-                    style={{
-                      flexDirection: 'row',
-                      alignItems: 'center',
-                      paddingVertical: 12,
-                      paddingHorizontal: 12,
-                      borderRadius: radii.md,
-                      borderWidth: 1,
-                      borderColor: isSelected ? colors.accent : colors.divider,
-                      backgroundColor: isSelected ? colors.accent900 : colors.card,
-                      marginBottom: 10,
-                    }}
-                  >
-                    <Text style={{ fontSize: 20, marginRight: 12 }}>{item.icon}</Text>
-                    <View style={{ flex: 1 }}>
-                      <Text style={{ color: colors.text, fontSize: 15, fontWeight: isSelected ? '700' : '500' }}>
-                        {item.label}
-                      </Text>
-                      <Text style={{ color: colors.textDim, fontSize: 11.5, marginTop: 1 }}>
-                        {item.sub}
-                      </Text>
-                    </View>
-                    {isSelected && (
-                      <Text style={{ color: colors.accent, marginLeft: 'auto', fontWeight: 'bold', fontSize: 16 }}>✓</Text>
-                    )}
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-          </View>
-        </View>
-      </Modal>
-
-      {/* ---------------------------------------------------- */}
       {/* SOCIAL MEDIA LINKS MODAL (Settings & Help)           */}
       {/* ---------------------------------------------------- */}
       <Modal visible={showSocialModal} animationType="slide" transparent>
@@ -1272,7 +1185,7 @@ export const AccountsScreen = ({
                               width: 34,
                               height: 34,
                               borderRadius: 17,
-                              backgroundColor: colors.surface,
+                              ...getGlass(colors.isDark).card,
                               justifyContent: 'center',
                               alignItems: 'center',
                               marginRight: 10,
@@ -1845,11 +1758,29 @@ const styles = StyleSheet.create({
     width: '48.5%',
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    gap: 9,
     borderRadius: radii.md,
-    paddingVertical: 12,
-    paddingHorizontal: 11,
-    minHeight: 68,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    minHeight: 52,
+  },
+  toolBadgeFloat: {
+    position: 'absolute',
+    top: -6,
+    right: -6,
+    minWidth: 16,
+    height: 16,
+    paddingHorizontal: 4,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  toolBadgeFloatText: { color: '#161826', fontSize: 9.5, fontWeight: '800' },
+  toolTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 4,
   },
   toolContentCol: {
     flex: 1,
@@ -1872,7 +1803,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   toolTitle: {
-    fontSize: 13.5,
+    fontSize: 12.5,
     fontWeight: '700',
     letterSpacing: -0.2,
   },
@@ -1881,8 +1812,8 @@ const styles = StyleSheet.create({
     lineHeight: 14,
   },
   toolIconContainer: {
-    width: 36,
-    height: 36,
+    width: 30,
+    height: 30,
     borderRadius: radii.sm,
     alignItems: 'center',
     justifyContent: 'center',

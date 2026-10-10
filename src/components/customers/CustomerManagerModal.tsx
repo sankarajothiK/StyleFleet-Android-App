@@ -13,7 +13,6 @@ import {
   KeyboardAvoidingView,
   Platform,
   Keyboard,
-  Dimensions,
 } from 'react-native';
 import * as Contacts from 'expo-contacts/legacy';
 import { useTheme } from '../../theme/ThemeContext';
@@ -41,6 +40,8 @@ interface CustomerManagerModalProps {
   onAddSuccess: (customer: Customer) => void;
   onBatchSuccess: (customers: Customer[]) => void;
   onEditSuccess: (customer: Customer) => void;
+  /** Bulk import from the phone's contacts. Owners only; defaults to allowed. */
+  allowContactImport?: boolean;
 }
 
 export const CustomerManagerModal = ({
@@ -52,6 +53,7 @@ export const CustomerManagerModal = ({
   onAddSuccess,
   onBatchSuccess,
   onEditSuccess,
+  allowContactImport = true,
 }: CustomerManagerModalProps) => {
   const { colors } = useTheme();
   const { t } = useLanguage();
@@ -93,6 +95,28 @@ export const CustomerManagerModal = ({
     };
   }, []);
 
+  // Keep the field being typed in visible without a timed scroll-to-end (that fought the keyboard resize and made the sheet jump)
+  const fieldY = React.useRef<Record<string, number>>({});
+  const focusedField = React.useRef<string | null>(null);
+
+  const scrollToField = (key: string) => {
+    manualScrollRef.current?.scrollTo({ y: Math.max(0, (fieldY.current[key] ?? 0) - 12), animated: false });
+  };
+
+  const handleFieldFocus = (key: string) => {
+    focusedField.current = key;
+    if (keyboardHeight > 0) scrollToField(key);
+  };
+
+  useEffect(() => {
+    if (keyboardHeight > 0 && focusedField.current) {
+      const key = focusedField.current;
+      const id = requestAnimationFrame(() => scrollToField(key));
+      return () => cancelAnimationFrame(id);
+    }
+    return undefined;
+  }, [keyboardHeight]);
+
   // Map of 10-digit normalized phone -> customer for instant duplicate checks
   const existingPhoneMap = React.useMemo(() => {
     const map = new Map<string, Customer>();
@@ -122,7 +146,8 @@ export const CustomerManagerModal = ({
         setNotes(customerToEdit.notes || '');
         setIsStarred(Boolean(customerToEdit.is_starred));
       } else {
-        setViewMode('choice');
+        // Stylists cannot import contacts in bulk: they add one client at a time
+        setViewMode(allowContactImport ? 'choice' : 'manual');
         setName('');
         setPhone('');
         setInitialDue('');
@@ -130,7 +155,7 @@ export const CustomerManagerModal = ({
         setIsStarred(false);
       }
     }
-  }, [visible, customerToEdit]);
+  }, [visible, customerToEdit, allowContactImport]);
 
   // Load Real Device Contacts
   const handleOpenContacts = async () => {
@@ -506,17 +531,18 @@ export const CustomerManagerModal = ({
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         style={{ flex: 1 }}
       >
-        <View style={[styles.modalOverlay, { paddingBottom: keyboardHeight > 0 ? keyboardHeight : 0 }]}>
+        {/* The Android modal window is not resized by the keyboard: lift the sheet above it so the notes field stays visible */}
+        <View
+          style={[
+            styles.modalOverlay,
+            Platform.OS === 'android' && keyboardHeight > 0 ? { paddingBottom: keyboardHeight } : null,
+          ]}
+        >
         <View
           style={[
             styles.modalContent,
             { backgroundColor: colors.surface, borderColor: colors.divider },
-            keyboardHeight > 0
-              ? {
-                  maxHeight: Dimensions.get('window').height - keyboardHeight - 20,
-                  paddingBottom: 10,
-                }
-              : null,
+            keyboardHeight > 0 ? { paddingBottom: 10 } : null,
           ]}
         >
           {/* VIEW: OPTION CHOICE SHEET */}
@@ -792,10 +818,9 @@ export const CustomerManagerModal = ({
 
               <ScrollView
                 ref={manualScrollRef}
-                style={{ maxHeight: keyboardHeight > 0 ? Math.min(420, Dimensions.get('window').height - keyboardHeight - 120) : undefined }}
+                style={{ flexShrink: 1 }}
                 contentContainerStyle={{ paddingBottom: keyboardHeight > 0 ? 80 : 25 }}
                 keyboardShouldPersistTaps="always"
-                automaticallyAdjustKeyboardInsets={true}
                 showsVerticalScrollIndicator={true}
               >
                 <Text style={[styles.inputLabel, { color: colors.textDim }]}>{t('fullName')}</Text>
@@ -818,20 +843,18 @@ export const CustomerManagerModal = ({
                   onChangeText={(val) => setPhone(val.replace(/\D/g, '').slice(0, 10))}
                 />
 
-                <Text style={[styles.inputLabel, { color: colors.textDim }]}>{t('initialDue')}</Text>
-                <TextInput
-                  style={[styles.textInput, { backgroundColor: colors.bg, borderColor: colors.divider, color: colors.text }]}
-                  placeholder="0 (leave empty if none)"
-                  placeholderTextColor={colors.placeholder || colors.textDim}
-                  keyboardType="numeric"
-                  value={initialDue}
-                  onChangeText={setInitialDue}
-                  onFocus={() => {
-                    setTimeout(() => {
-                      manualScrollRef.current?.scrollToEnd({ animated: true });
-                    }, 180);
-                  }}
-                />
+                <View onLayout={(e) => { fieldY.current.contactDue = e.nativeEvent.layout.y; }}>
+                  <Text style={[styles.inputLabel, { color: colors.textDim }]}>{t('initialDue')}</Text>
+                  <TextInput
+                    style={[styles.textInput, { backgroundColor: colors.bg, borderColor: colors.divider, color: colors.text }]}
+                    placeholder="0 (leave empty if none)"
+                    placeholderTextColor={colors.placeholder || colors.textDim}
+                    keyboardType="numeric"
+                    value={initialDue}
+                    onChangeText={setInitialDue}
+                    onFocus={() => handleFieldFocus('contactDue')}
+                  />
+                </View>
 
                 <TouchableOpacity
                   activeOpacity={0.8}
@@ -848,7 +871,7 @@ export const CustomerManagerModal = ({
           {viewMode === 'manual' && (
             <View style={styles.manualContainer}>
               <View style={styles.sheetHeader}>
-                {!customerToEdit && (
+                {!customerToEdit && allowContactImport && (
                   <TouchableOpacity onPress={() => setViewMode('choice')}>
                     <Text style={[styles.backNavText, { color: colors.accent }]}>← {t('back')}</Text>
                   </TouchableOpacity>
@@ -863,10 +886,9 @@ export const CustomerManagerModal = ({
 
               <ScrollView
                 ref={manualScrollRef}
-                style={{ maxHeight: keyboardHeight > 0 ? Math.min(420, Dimensions.get('window').height - keyboardHeight - 120) : undefined }}
+                style={{ flexShrink: 1 }}
                 contentContainerStyle={{ paddingBottom: keyboardHeight > 0 ? 80 : 25 }}
                 keyboardShouldPersistTaps="always"
-                automaticallyAdjustKeyboardInsets={true}
                 showsVerticalScrollIndicator={true}
               >
                 <Text style={[styles.inputLabel, { color: colors.textDim }]}>{t('fullName')}</Text>
@@ -876,6 +898,7 @@ export const CustomerManagerModal = ({
                   placeholderTextColor={colors.placeholder || colors.textDim}
                   value={name}
                   onChangeText={setName}
+                  onFocus={() => { focusedField.current = null; }}
                 />
 
                 <Text style={[styles.inputLabel, { color: colors.textDim }]}>{t('mobileNumber')}</Text>
@@ -887,24 +910,23 @@ export const CustomerManagerModal = ({
                   maxLength={10}
                   value={phone}
                   onChangeText={(val) => setPhone(val.replace(/\D/g, '').slice(0, 10))}
+                  onFocus={() => { focusedField.current = null; }}
                 />
 
-                <Text style={[styles.inputLabel, { color: colors.textDim }]}>
-                  {customerToEdit ? t('outstandingDue') : t('initialDue')}
-                </Text>
-                <TextInput
-                  style={[styles.textInput, { backgroundColor: colors.bg, borderColor: colors.divider, color: colors.text }]}
-                  placeholder="0.00"
-                  placeholderTextColor={colors.placeholder || colors.textDim}
-                  keyboardType="numeric"
-                  value={initialDue}
-                  onChangeText={setInitialDue}
-                  onFocus={() => {
-                    setTimeout(() => {
-                      manualScrollRef.current?.scrollToEnd({ animated: true });
-                    }, 180);
-                  }}
-                />
+                <View onLayout={(e) => { fieldY.current.due = e.nativeEvent.layout.y; }}>
+                  <Text style={[styles.inputLabel, { color: colors.textDim }]}>
+                    {customerToEdit ? t('outstandingDue') : t('initialDue')}
+                  </Text>
+                  <TextInput
+                    style={[styles.textInput, { backgroundColor: colors.bg, borderColor: colors.divider, color: colors.text }]}
+                    placeholder="0.00"
+                    placeholderTextColor={colors.placeholder || colors.textDim}
+                    keyboardType="numeric"
+                    value={initialDue}
+                    onChangeText={setInitialDue}
+                    onFocus={() => handleFieldFocus('due')}
+                  />
+                </View>
 
                 <TouchableOpacity
                   activeOpacity={0.8}
@@ -922,23 +944,21 @@ export const CustomerManagerModal = ({
                   </View>
                 </TouchableOpacity>
 
-                <Text style={[styles.inputLabel, { color: colors.textDim }]}>{t('notes')}</Text>
-                <TextInput
-                  style={[
-                    styles.textInput,
-                    { backgroundColor: colors.bg, borderColor: colors.divider, color: colors.text, height: 75 },
-                  ]}
-                  placeholder="e.g. Prefers scissor cut, skin fade regular"
-                  placeholderTextColor={colors.placeholder || colors.textDim}
-                  multiline
-                  value={notes}
-                  onChangeText={setNotes}
-                  onFocus={() => {
-                    setTimeout(() => {
-                      manualScrollRef.current?.scrollToEnd({ animated: true });
-                    }, 180);
-                  }}
-                />
+                <View onLayout={(e) => { fieldY.current.notes = e.nativeEvent.layout.y; }}>
+                  <Text style={[styles.inputLabel, { color: colors.textDim }]}>{t('notes')}</Text>
+                  <TextInput
+                    style={[
+                      styles.textInput,
+                      { backgroundColor: colors.bg, borderColor: colors.divider, color: colors.text, height: 75, textAlignVertical: 'top' },
+                    ]}
+                    placeholder="e.g. Prefers scissor cut, skin fade regular"
+                    placeholderTextColor={colors.placeholder || colors.textDim}
+                    multiline
+                    value={notes}
+                    onChangeText={setNotes}
+                    onFocus={() => handleFieldFocus('notes')}
+                  />
+                </View>
 
                 <TouchableOpacity
                   activeOpacity={0.8}
@@ -1126,6 +1146,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
   },
   manualContainer: {
+    flexShrink: 1,
     paddingBottom: 16,
   },
   inputLabel: {

@@ -7,38 +7,72 @@ import {
   ScrollView,
   StyleSheet,
   Modal,
-  KeyboardAvoidingView,
   Platform,
   Keyboard,
   Dimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '../../theme/ThemeContext';
+import { GlassBackdrop } from '../../components/common/GlassBackdrop';
+import { getGlass } from '../../theme/glass';
 import { useLanguage } from '../../i18n/LanguageContext';
 import { Button } from '../../components/common/Button';
 import { BackIcon, CrossIcon, EditIcon, TrashIcon } from '../../components/common/SvgIcons';
 import { Chip } from '../../components/common/Chip';
-import { Expense, Period } from '../../types/domain';
+import { Expense, Period, StaffMember } from '../../types/domain';
 import { inrFromMinor } from '../../utils/format';
+import { cleanAmountInput } from '../../utils/amountInput';
+import { countsInProfit, splitExpenseTotals } from '../../utils/expenseProfit';
+import { fmt } from '../../i18n/format';
+import { stylistNameFor, stylistOptions } from '../../utils/expenseStylist';
 import { EXPENSE_CATEGORIES } from '../../repositories/expenseRepository';
 import { radii } from '../../theme/spacing';
 import { Alert } from 'react-native';
+import { usePullRefresh } from '../../hooks/usePullRefresh';
 
 interface ExpensesScreenProps {
+  onRefresh?: () => Promise<void>;
   expenses: Expense[];
+  /** Stylist limited to today: no Week / Month tabs. */
+  todayOnly?: boolean;
+  /** Owner only: may decide whether an expense counts in profit. */
+  canChooseProfit?: boolean;
+  /** Team members the owner can link an expense to. */
+  staff?: StaffMember[];
+  /** Owner only: may link an expense to a team member. */
+  canTagStylist?: boolean;
   onBack: () => void;
-  onAddExpense: (category: string, amountRupees: number, note: string) => void;
-  onEditExpense?: (expenseId: string, category: string, amountRupees: number, note: string) => void;
-  onDeleteExpense?: (expenseId: string) => void;
+  onAddExpense: (
+    category: string,
+    amountRupees: number,
+    note: string,
+    includeInProfit: boolean,
+    staffId: string | null
+  ) => void | Promise<void>;
+  onEditExpense?: (
+    expenseId: string,
+    category: string,
+    amountRupees: number,
+    note: string,
+    includeInProfit: boolean,
+    staffId: string | null
+  ) => void | Promise<void>;
+  onDeleteExpense?: (expenseId: string) => void | Promise<void>;
 }
 
 export const ExpensesScreen = ({
+  onRefresh,
   expenses,
+  todayOnly = false,
+  canChooseProfit = true,
+  staff = [],
+  canTagStylist = true,
   onBack,
   onAddExpense,
   onEditExpense,
   onDeleteExpense,
 }: ExpensesScreenProps) => {
+  const pullRefresh = usePullRefresh(onRefresh);
   const { colors } = useTheme();
   const { t } = useLanguage();
   const [period, setPeriod] = useState<Period>('Day');
@@ -49,8 +83,14 @@ export const ExpensesScreen = ({
   const [amountStr, setAmountStr] = useState('');
   const [noteStr, setNoteStr] = useState('');
   const [selectedPayMode, setSelectedPayMode] = useState<string>('UPI');
+  const [includeInProfit, setIncludeInProfit] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+  const [selectedStaffId, setSelectedStaffId] = useState<string | null>(null);
+  const [stylistListOpen, setStylistListOpen] = useState(false);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
-  const expenseScrollRef = React.useRef<ScrollView>(null);
+  // Android already shrinks the window for the keyboard (softwareKeyboardLayoutMode: resize), so only iOS
+  // needs a manual inset. Adding it on Android pushes the sheet up twice and it jumps to the top.
+  const keyboardInset = Platform.OS === 'ios' ? keyboardHeight : 0;
 
   useEffect(() => {
     const showSub = Keyboard.addListener(
@@ -67,7 +107,16 @@ export const ExpensesScreen = ({
     };
   }, []);
 
+  const stylistLabel = (id: string): string => {
+    const member = staff.find((m) => m.id === id);
+    if (!member) return '';
+    return member.is_active === false
+      ? fmt(t('exStylistInactive', '{name} (inactive)'), { name: member.name })
+      : member.name;
+  };
+
   const totalExpenseMinor = expenses.reduce((acc, e) => acc + e.amount_minor, 0);
+  const excludedMinor = splitExpenseTotals(expenses).excludedMinor;
 
   const handleOpenAdd = () => {
     setEditingExpense(null);
@@ -75,15 +124,22 @@ export const ExpensesScreen = ({
     setAmountStr('');
     setNoteStr('');
     setSelectedPayMode('UPI');
+    setIncludeInProfit(true);
+    setSelectedStaffId(null);
+    setStylistListOpen(false);
     setSheetOpen(true);
   };
 
   const handleOpenEdit = (e: Expense) => {
     setEditingExpense(e);
     setSelectedCat(e.category_name);
-    setAmountStr(Math.round(e.amount_minor / 100).toString());
+    // exact amount, so editing never rounds away the paise
+    setAmountStr((e.amount_minor / 100).toFixed(2).replace(/.?0+$/, ''));
     setNoteStr(e.note);
     setSelectedPayMode(e.payment_method || 'UPI');
+    setIncludeInProfit(countsInProfit(e));
+    setSelectedStaffId(e.staff_id ?? null);
+    setStylistListOpen(false);
     setSheetOpen(true);
   };
 
@@ -97,36 +153,46 @@ export const ExpensesScreen = ({
           text: 'Delete',
           style: 'destructive',
           onPress: () => {
-            if (onDeleteExpense) onDeleteExpense(e.id);
+            // the navigator shows the error if the delete fails
+            if (onDeleteExpense) Promise.resolve(onDeleteExpense(e.id)).catch(() => {});
           },
         },
       ]
     );
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
+    if (isSaving) return;
     const amt = parseFloat(amountStr);
     if (isNaN(amt) || amt <= 0) return;
 
     const baseNote = noteStr.trim() || selectedCat;
     const finalNote = `${baseNote} (${selectedPayMode})`;
 
-    if (editingExpense) {
-      if (onEditExpense) {
-        onEditExpense(editingExpense.id, selectedCat, amt, finalNote);
+    setIsSaving(true);
+    try {
+      if (editingExpense) {
+        if (onEditExpense) {
+          await onEditExpense(editingExpense.id, selectedCat, amt, finalNote, includeInProfit, selectedStaffId);
+        }
+        setEditingExpense(null);
+      } else {
+        await onAddExpense(selectedCat, amt, finalNote, includeInProfit, selectedStaffId);
       }
-      setEditingExpense(null);
-    } else {
-      onAddExpense(selectedCat, amt, finalNote);
-    }
 
-    setAmountStr('');
-    setNoteStr('');
-    setSheetOpen(false);
+      setAmountStr('');
+      setNoteStr('');
+      setSheetOpen(false);
+    } catch {
+      // The navigator already showed why it failed. Keep the sheet open so nothing typed is lost.
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.bg }]}>
+      <GlassBackdrop isDark={colors.isDark} />
       <View style={styles.header}>
         <View style={styles.topBar}>
           <Button variant="icon" onPress={onBack}>
@@ -136,7 +202,7 @@ export const ExpensesScreen = ({
         </View>
 
         <View style={[styles.periodTabsRow, { borderColor: colors.divider }]}>
-          {(['Day', 'Week', 'Month'] as const).map((p) => {
+          {(todayOnly ? (['Day'] as const) : (['Day', 'Week', 'Month'] as const)).map((p) => {
             const isSelected = period === p;
             return (
               <TouchableOpacity
@@ -168,7 +234,7 @@ export const ExpensesScreen = ({
         </View>
       </View>
 
-      <ScrollView contentContainerStyle={styles.scrollContent}>
+      <ScrollView contentContainerStyle={styles.scrollContent} refreshControl={pullRefresh}>
         {/* Total & entries count */}
         <View style={styles.totalRow}>
           <Text style={[styles.totalAmount, { color: colors.text }]}>
@@ -178,6 +244,11 @@ export const ExpensesScreen = ({
             {expenses.length} entries
           </Text>
         </View>
+        {excludedMinor > 0 && (
+          <Text style={[styles.entriesCount, { color: colors.textDim, marginBottom: 8 }]}>
+            {fmt(t('exNotCounted', '{amt} not counted in profit'), { amt: inrFromMinor(excludedMinor) })}
+          </Text>
+        )}
 
         {/* Expenses List */}
         <View style={styles.list}>
@@ -207,6 +278,18 @@ export const ExpensesScreen = ({
                   <Text style={[styles.metaTime, { color: colors.textDim }]}>
                     {e.expense_date} · {e.payment_method}
                   </Text>
+                  {stylistNameFor(staff, e.staff_id) && (
+                    <View style={[styles.stylistTag, { backgroundColor: colors.accent + '24' }]}>
+                      <Text style={[styles.stylistTagText, { color: colors.accent }]} numberOfLines={1}>
+                        {stylistNameFor(staff, e.staff_id)}
+                      </Text>
+                    </View>
+                  )}
+                  {!countsInProfit(e) && (
+                    <View style={styles.notInProfitBadge}>
+                      <Text style={styles.notInProfitText}>{t('exNotInProfit', 'Not in profit')}</Text>
+                    </View>
+                  )}
                 </View>
               </View>
               <View style={{ alignItems: 'flex-end', justifyContent: 'space-between', paddingVertical: 2 }}>
@@ -247,12 +330,8 @@ export const ExpensesScreen = ({
         transparent
         onRequestClose={() => setSheetOpen(false)}
       >
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          keyboardVerticalOffset={Platform.OS === 'ios' ? 24 : 0}
-          style={{ flex: 1 }}
-        >
-          <View style={[styles.modalOverlay, { paddingBottom: keyboardHeight > 0 ? keyboardHeight : 0 }]}>
+        <View style={{ flex: 1 }}>
+          <View style={[styles.modalOverlay, { paddingBottom: keyboardInset }]}>
             <TouchableOpacity
               style={StyleSheet.absoluteFill}
               activeOpacity={1}
@@ -263,7 +342,7 @@ export const ExpensesScreen = ({
                 styles.sheetContainer,
                 {
                   backgroundColor: colors.surface,
-                  maxHeight: keyboardHeight > 0 ? Dimensions.get('window').height - keyboardHeight - 30 : '92%',
+                  maxHeight: keyboardInset > 0 ? Dimensions.get('window').height - keyboardInset - 30 : '92%',
                 },
               ]}
             >
@@ -281,12 +360,10 @@ export const ExpensesScreen = ({
               </View>
 
               <ScrollView
-                ref={expenseScrollRef}
                 showsVerticalScrollIndicator={false}
-                keyboardShouldPersistTaps="always"
+                keyboardShouldPersistTaps="handled"
                 bounces={false}
-                automaticallyAdjustKeyboardInsets={true}
-                contentContainerStyle={{ paddingBottom: Math.max(50, keyboardHeight + 30) }}
+                contentContainerStyle={{ paddingBottom: 24 }}
               >
                 {/* Category Chips */}
                 <Text style={[styles.sheetInputLabel, { color: colors.textDim }]}>
@@ -323,8 +400,7 @@ export const ExpensesScreen = ({
                       placeholderTextColor={colors.placeholder || colors.textDim}
                       keyboardType="numeric"
                       value={amountStr}
-                      onChangeText={setAmountStr}
-                      onFocus={() => setTimeout(() => expenseScrollRef.current?.scrollToEnd({ animated: true }), 220)}
+                      onChangeText={(v) => setAmountStr(cleanAmountInput(v))}
                     />
                   </View>
 
@@ -345,7 +421,6 @@ export const ExpensesScreen = ({
                       placeholderTextColor={colors.placeholder || colors.textDim}
                       value={noteStr}
                       onChangeText={setNoteStr}
-                      onFocus={() => setTimeout(() => expenseScrollRef.current?.scrollToEnd({ animated: true }), 220)}
                     />
                   </View>
                 </View>
@@ -383,23 +458,169 @@ export const ExpensesScreen = ({
                   })}
                 </View>
 
+                {canTagStylist && (
+                  <View style={{ marginTop: 6 }}>
+                    <Text style={[styles.sheetInputLabel, { color: colors.textDim }]}>
+                      {t('exStylist', 'Stylist (optional)')}
+                    </Text>
+                    {stylistOptions(staff, selectedStaffId).length === 0 ? (
+                      <Text style={[styles.profitSub, { color: colors.textDim }]}>
+                        {t('exStylistHint', 'Add stylists in Team to link expenses to them')}
+                      </Text>
+                    ) : (
+                      <>
+                        <TouchableOpacity
+                          activeOpacity={0.85}
+                          onPress={() => setStylistListOpen((v) => !v)}
+                          accessibilityRole="button"
+                          accessibilityLabel={t('exStylist', 'Stylist (optional)')}
+                          style={[
+                            styles.dropdownField,
+                            {
+                              backgroundColor: colors.bg,
+                              borderColor: stylistListOpen ? colors.accent : colors.divider,
+                            },
+                          ]}
+                        >
+                          <Text style={{ flex: 1, color: colors.text, fontSize: 14, fontWeight: '600' }} numberOfLines={1}>
+                            {selectedStaffId
+                              ? stylistLabel(selectedStaffId)
+                              : t('exStylistNone', 'None · shop expense')}
+                          </Text>
+                          <Text style={{ color: colors.textDim }}>{stylistListOpen ? '\u25B2' : '\u25BC'}</Text>
+                        </TouchableOpacity>
+                        {stylistListOpen && (
+                          <View style={[styles.dropdownList, { backgroundColor: colors.bg, borderColor: colors.divider }]}>
+                            {[null, ...stylistOptions(staff, selectedStaffId).map((m) => m.id)].map((id) => {
+                              const active = id === selectedStaffId;
+                              return (
+                                <TouchableOpacity
+                                  key={id ?? 'none'}
+                                  activeOpacity={0.8}
+                                  onPress={() => {
+                                    setSelectedStaffId(id);
+                                    setStylistListOpen(false);
+                                  }}
+                                  style={[styles.dropdownItem, { borderBottomColor: colors.divider }]}
+                                >
+                                  <Text
+                                    style={{
+                                      flex: 1,
+                                      color: active ? colors.accent : colors.text,
+                                      fontWeight: active ? '800' : '500',
+                                      fontSize: 14,
+                                    }}
+                                    numberOfLines={1}
+                                  >
+                                    {id ? stylistLabel(id) : t('exStylistNone', 'None · shop expense')}
+                                  </Text>
+                                  {active && <Text style={{ color: colors.accent, fontWeight: '800' }}>{'\u2713'}</Text>}
+                                </TouchableOpacity>
+                              );
+                            })}
+                          </View>
+                        )}
+                      </>
+                    )}
+                  </View>
+                )}
+
+                {canChooseProfit && (
+                  <TouchableOpacity
+                    activeOpacity={0.85}
+                    onPress={() => setIncludeInProfit((v) => !v)}
+                    accessibilityRole="switch"
+                    accessibilityState={{ checked: includeInProfit }}
+                    accessibilityLabel={t('exCountProfit', 'Count in profit')}
+                    style={[
+                      styles.profitRow,
+                      { backgroundColor: colors.bg, borderColor: includeInProfit ? colors.accent + '88' : colors.divider },
+                    ]}
+                  >
+                    <View style={{ flex: 1, paddingRight: 10 }}>
+                      <Text style={[styles.profitLabel, { color: colors.text }]}>
+                        {t('exCountProfit', 'Count in profit')}
+                      </Text>
+                      <Text style={[styles.profitSub, { color: colors.textDim }]}>
+                        {includeInProfit
+                          ? t('exCountProfitOn', 'Subtracted when profit is calculated')
+                          : t('exCountProfitOff', 'Saved in the list, but profit ignores it (for example personal spending)')}
+                      </Text>
+                    </View>
+                    <View
+                      style={[
+                        styles.profitTrack,
+                        { borderColor: includeInProfit ? colors.accent : colors.divider },
+                        includeInProfit && { backgroundColor: colors.accent },
+                      ]}
+                    >
+                      <View
+                        style={[
+                          styles.profitKnob,
+                          { backgroundColor: includeInProfit ? '#0D0E11' : colors.textDim },
+                          { alignSelf: includeInProfit ? 'flex-end' : 'flex-start' },
+                        ]}
+                      />
+                    </View>
+                  </TouchableOpacity>
+                )}
+
                 <Button
                   label={t('save')}
                   block
                   disabled={!amountStr.trim()}
+                  loading={isSaving}
                   onPress={handleSave}
                   style={{ marginTop: 14 }}
                 />
               </ScrollView>
             </View>
           </View>
-        </KeyboardAvoidingView>
+        </View>
       </Modal>
     </SafeAreaView>
   );
 };
 
 const styles = StyleSheet.create({
+  stylistTag: { paddingHorizontal: 7, paddingVertical: 1, borderRadius: 8, maxWidth: 130 },
+  stylistTagText: { fontSize: 10.5, fontWeight: '800' },
+  dropdownField: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    height: 44,
+  },
+  dropdownList: { borderWidth: 1, borderRadius: 12, marginTop: 6, overflow: 'hidden' },
+  dropdownItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+  },
+  notInProfitBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 8,
+    backgroundColor: 'rgba(245, 158, 11, 0.16)',
+  },
+  notInProfitText: { fontSize: 10, fontWeight: '800', color: '#F59E0B' },
+  profitRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderRadius: 14,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    marginTop: 6,
+  },
+  profitLabel: { fontSize: 14, fontWeight: '700' },
+  profitSub: { fontSize: 11.5, lineHeight: 16, marginTop: 2 },
+  profitTrack: { width: 46, height: 26, borderRadius: 13, borderWidth: 1, padding: 2, justifyContent: 'center' },
+  profitKnob: { width: 20, height: 20, borderRadius: 10 },
   safeArea: {
     flex: 1,
   },

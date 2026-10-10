@@ -23,21 +23,21 @@ describe('Manage Plans & Subscription Tier Configuration', () => {
 
     const [threeMonths, sixMonths, twelveMonths] = LAUNCH_OFFER_SUBSCRIPTION_PLANS;
 
-    // 3 Months @ ₹1,499
+    // 3 Months @ ₹2,999 (3 x ₹999, no offer)
     expect(threeMonths.id).toBe('3_months');
-    expect(threeMonths.priceInRupees).toBe(1499);
+    expect(threeMonths.priceInRupees).toBe(2999);
     expect(threeMonths.durationMonths).toBe(3);
     expect(threeMonths.durationDays).toBe(90);
 
-    // 6 Months @ ₹2,399 (20% OFF)
+    // 6 Months @ ₹4,799 (₹799 a month, 20% OFF)
     expect(sixMonths.id).toBe('6_months');
-    expect(sixMonths.priceInRupees).toBe(2399);
+    expect(sixMonths.priceInRupees).toBe(4799);
     expect(sixMonths.durationMonths).toBe(6);
     expect(sixMonths.durationDays).toBe(180);
     expect(sixMonths.badge).toBe('20% OFF');
     expect(sixMonths.discountPercent).toBe(20);
 
-    // 12 Months @ ₹5,999 (50% OFF - Strongest Promo)
+    // 12 Months @ ₹5,999 (50% OFF, regular ₹11,999)
     expect(twelveMonths.id).toBe('12_months');
     expect(twelveMonths.priceInRupees).toBe(5999);
     expect(twelveMonths.durationMonths).toBe(12);
@@ -50,12 +50,12 @@ describe('Manage Plans & Subscription Tier Configuration', () => {
     const sixMonths = getPlanById('6_months', true)!;
     const twelveMonths = getPlanById('12_months', true)!;
 
-    // 6 Months: 2999 - 2399 = 600 (20%)
-    expect(calculateSavingsRupees(sixMonths)).toBe(600);
+    // 6 Months: 5999 - 4799 = 1200 (20%)
+    expect(calculateSavingsRupees(sixMonths)).toBe(1200);
     expect(calculateSavingsPercent(sixMonths)).toBe(20);
 
-    // 12 Months: 11998 - 5999 = 5999 (50%)
-    expect(calculateSavingsRupees(twelveMonths)).toBe(5999);
+    // 12 Months: 11999 - 5999 = 6000 (50%)
+    expect(calculateSavingsRupees(twelveMonths)).toBe(6000);
     expect(calculateSavingsPercent(twelveMonths)).toBe(50);
   });
 
@@ -163,7 +163,7 @@ describe('Active Subscription Calculations', () => {
       subscription_end_date: endDate,
       cashfree_order_id: 'cf_order_123',
       cashfree_payment_id: 'cf_pay_456',
-      amount_minor: 239900,
+      amount_minor: 479900,
       currency: 'INR',
       created_at: startDate,
       updated_at: startDate,

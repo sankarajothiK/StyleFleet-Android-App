@@ -1,4 +1,6 @@
 import { supabase } from '../lib/supabase';
+import { assertSaved, isRemoteShop } from '../utils/persist';
+import { isValidUuid } from '../utils/uuid';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Appointment, AppointmentStatus } from '../types/domain';
 
@@ -109,6 +111,8 @@ export class AppointmentRepository {
     stylistName: string;
     stylistId?: string | null;
     stylistIds?: string[];
+    serviceQuantities?: Record<string, number>;
+    durationMinutes?: number;
     slot: string;
     dateStr?: string;
     amountRupees: number;
@@ -128,6 +132,7 @@ export class AppointmentRepository {
       dateStr,
       amountRupees,
       sendConfirm = true,
+      durationMinutes = 45,
     } = params;
 
     const startsAtDisplay = dateStr ? `${dateStr} ${slot}` : slot;
@@ -141,9 +146,9 @@ export class AppointmentRepository {
     const notesPayload = JSON.stringify({
       notes: customerId ? null : customerName,
       service_ids: resolvedServiceIds,
-      service_quantities: (params as any).serviceQuantities || undefined,
+      service_quantities: params.serviceQuantities || undefined,
       staff_name: stylistName,
-      staff_ids: (params as any).stylistIds || (params as any).staffIds || undefined,
+      staff_ids: params.stylistIds || undefined,
     });
 
     const newAppt: Appointment = {
@@ -158,45 +163,30 @@ export class AppointmentRepository {
       service_ids: resolvedServiceIds,
       service_name: serviceName,
       starts_at: startsAtDisplay,
-      duration_minutes: 45,
+      duration_minutes: durationMinutes,
       status: 'Confirmed',
       notes: notesPayload,
       amount_minor: Math.round(amountRupees * 100),
       created_at: new Date().toISOString(),
     };
 
-    try {
+    if (isRemoteShop(shopId)) {
       const payload: any = {
         shop_id: shopId,
         starts_at: startsAtDisplay,
-        duration_minutes: 45,
+        duration_minutes: durationMinutes,
         status: 'Confirmed',
         notes: notesPayload,
       };
 
-      if (customerId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(customerId)) {
-        payload.customer_id = customerId;
-      }
-      if (stylistId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(stylistId)) {
-        payload.staff_id = stylistId;
-      }
-      if (serviceId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(serviceId)) {
-        payload.service_id = serviceId;
-      }
+      if (isValidUuid(customerId)) payload.customer_id = customerId;
+      if (isValidUuid(stylistId)) payload.staff_id = stylistId;
+      if (isValidUuid(serviceId)) payload.service_id = serviceId;
 
-      const { data, error } = await supabase
-        .from('appointments')
-        .insert(payload)
-        .select()
-        .single();
-
-      if (!error && data) {
-        newAppt.id = data.id;
-      } else if (error) {
-        console.warn('Supabase appointment insert error:', error.message);
-      }
-    } catch (e) {
-      console.warn('Supabase appointment save offline:', e);
+      const saved = await supabase.from('appointments').insert(payload).select().single();
+      assertSaved(saved, 'the appointment');
+      if (!saved.data) throw new Error('The appointment could not be saved. Please try again.');
+      newAppt.id = saved.data.id;
     }
 
     const current = (await this.getCachedAppointments(shopId)) || [];
@@ -213,20 +203,24 @@ export class AppointmentRepository {
     apptId: string,
     newStatus: AppointmentStatus
   ): Promise<void> {
+    // Save first. The phone's copy changes only once the database has it.
+    if (isRemoteShop(shopId) && isValidUuid(apptId)) {
+      const result = await supabase
+        .from('appointments')
+        .update({ status: newStatus } as any)
+        .eq('id', apptId)
+        .select('id');
+      assertSaved(result, 'the appointment status');
+      if (!result.data || result.data.length === 0) {
+        throw new Error('This appointment was not found on the server, so the status was not saved.');
+      }
+    }
+
     const current = (await this.getCachedAppointments(shopId)) || [];
     const target = current.find((a) => a.id === apptId);
     if (target) {
       target.status = newStatus;
       await this.cacheAppointments(shopId, current);
-    }
-
-    try {
-      await supabase
-        .from('appointments')
-        .update({ status: newStatus } as any)
-        .eq('id', apptId);
-    } catch {
-      // ignore
     }
   }
 
@@ -297,36 +291,33 @@ export class AppointmentRepository {
         notes: updatedNotesStr,
       };
       updatedAppt = current[index];
-      await this.cacheAppointments(shopId, current);
     }
 
-    try {
+    if (isRemoteShop(shopId) && isValidUuid(apptId)) {
       const dbPayload: any = {};
       if (updates.starts_at !== undefined) dbPayload.starts_at = updates.starts_at;
       if (updates.duration_minutes !== undefined) dbPayload.duration_minutes = updates.duration_minutes;
       if (updates.status !== undefined) dbPayload.status = updates.status;
       if (updatedNotesStr !== undefined) dbPayload.notes = updatedNotesStr;
       if (updates.staff_id !== undefined) {
-        dbPayload.staff_id =
-          updates.staff_id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(updates.staff_id)
-            ? updates.staff_id
-            : null;
+        dbPayload.staff_id = isValidUuid(updates.staff_id) ? updates.staff_id : null;
       }
       if (updates.service_id !== undefined) {
-        dbPayload.service_id =
-          updates.service_id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(updates.service_id)
-            ? updates.service_id
-            : null;
+        dbPayload.service_id = isValidUuid(updates.service_id) ? updates.service_id : null;
       }
 
       if (Object.keys(dbPayload).length > 0) {
-        await supabase
-          .from('appointments')
-          .update(dbPayload)
-          .eq('id', apptId);
+        const result = await supabase.from('appointments').update(dbPayload).eq('id', apptId).select('id');
+        assertSaved(result, 'the appointment');
+        if (!result.data || result.data.length === 0) {
+          throw new Error('This appointment was not found on the server, so the changes were not saved.');
+        }
       }
-    } catch (e) {
-      console.warn('Supabase appointment update error:', e);
+    }
+
+    // Only now does the phone's copy change
+    if (index !== -1) {
+      await this.cacheAppointments(shopId, current);
     }
 
     return updatedAppt;
@@ -343,7 +334,6 @@ export class AppointmentRepository {
     const current = (await this.getCachedAppointments(shopId)) || [];
     const target = current.find((a) => a.id === apptId);
     const updated = current.filter((a) => a.id !== apptId);
-    await this.cacheAppointments(shopId, updated);
 
     const nowIso = new Date().toISOString();
     const resolvedRole = deletedBy?.role || 'owner';
@@ -379,9 +369,7 @@ export class AppointmentRepository {
           deleted_by_name: resolvedName,
         };
 
-    await this.saveDeletedAppointment(shopId, deletedRecord);
-
-    try {
+    if (isRemoteShop(shopId) && isValidUuid(apptId)) {
       let notesPayload: any = {};
       try {
         notesPayload = target?.notes ? JSON.parse(target.notes) : {};
@@ -396,13 +384,16 @@ export class AppointmentRepository {
         deleted_by_name: resolvedName,
       });
 
-      await supabase
+      const result = await supabase
         .from('appointments')
         .update({ status: 'Cancelled', notes: updatedNotes })
         .eq('id', apptId);
-    } catch (e) {
-      console.warn('Supabase appointment delete error:', e);
+      assertSaved(result, 'the cancellation');
     }
+
+    // Only now does the phone's copy change
+    await this.cacheAppointments(shopId, updated);
+    await this.saveDeletedAppointment(shopId, deletedRecord);
   }
 
   async getDeletedAppointments(shopId: string): Promise<Appointment[]> {

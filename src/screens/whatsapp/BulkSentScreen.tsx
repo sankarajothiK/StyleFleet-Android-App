@@ -2,6 +2,8 @@ import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '../../theme/ThemeContext';
+import { GlassBackdrop } from '../../components/common/GlassBackdrop';
+import { getGlass } from '../../theme/glass';
 import { Button } from '../../components/common/Button';
 import { CheckIcon } from '../../components/common/SvgIcons';
 import { WhatsAppAudience } from '../../repositories/whatsappRepository';
@@ -25,6 +27,7 @@ export const BulkSentScreen = ({
 
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.bg }]}>
+      <GlassBackdrop isDark={colors.isDark} />
       <View style={styles.container}>
         <View
           style={[
@@ -44,19 +47,19 @@ export const BulkSentScreen = ({
 
         {/* 3 Stats Grid */}
         <View style={styles.statsGrid}>
-          <View style={[styles.statBox, { backgroundColor: colors.surface }]}>
+          <View style={[styles.statBox, { ...getGlass(colors.isDark).card, borderWidth: 1 }]}>
             <Text style={[styles.statLabel, { color: colors.textDim }]}>QUEUED</Text>
             <Text style={[styles.statValue, { color: colors.text }]}>
               {audience.count}
             </Text>
           </View>
-          <View style={[styles.statBox, { backgroundColor: colors.surface }]}>
+          <View style={[styles.statBox, { ...getGlass(colors.isDark).card, borderWidth: 1 }]}>
             <Text style={[styles.statLabel, { color: colors.textDim }]}>DELIVERED</Text>
             <Text style={[styles.statValue, { color: colors.text }]}>
               {delivered}
             </Text>
           </View>
-          <View style={[styles.statBox, { backgroundColor: colors.surface }]}>
+          <View style={[styles.statBox, { ...getGlass(colors.isDark).card, borderWidth: 1 }]}>
             <Text style={[styles.statLabel, { color: colors.textDim }]}>REPLIED</Text>
             <Text style={[styles.statValue, { color: colors.text }]}>
               {replied}

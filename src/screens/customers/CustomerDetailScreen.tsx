@@ -10,6 +10,8 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '../../theme/ThemeContext';
+import { GlassBackdrop } from '../../components/common/GlassBackdrop';
+import { getGlass } from '../../theme/glass';
 import { useLanguage } from '../../i18n/LanguageContext';
 import { Button } from '../../components/common/Button';
 import {
@@ -165,6 +167,7 @@ export const CustomerDetailScreen = ({
 
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.bg }]}>
+      <GlassBackdrop isDark={colors.isDark} />
       <ScrollView contentContainerStyle={styles.scrollContent}>
         {/* Top bar with back, edit, delete, and star */}
         <View style={styles.topBar}>
@@ -237,7 +240,7 @@ export const CustomerDetailScreen = ({
                   style={[
                     styles.actionIconBtn,
                     {
-                      backgroundColor: colors.surface,
+                      ...getGlass(colors.isDark).card,
                       borderColor: colors.divider,
                     },
                   ]}
@@ -252,7 +255,7 @@ export const CustomerDetailScreen = ({
                   style={[
                     styles.actionIconBtn,
                     {
-                      backgroundColor: colors.surface,
+                      ...getGlass(colors.isDark).card,
                       borderColor: colors.divider,
                     },
                   ]}
@@ -325,19 +328,19 @@ export const CustomerDetailScreen = ({
 
         {/* Stats 3-column grid */}
         <View style={styles.statsGrid}>
-          <View style={[styles.statBox, { backgroundColor: colors.surface }]}>
+          <View style={[styles.statBox, { ...getGlass(colors.isDark).card, borderWidth: 1 }]}>
             <Text style={[styles.statLabel, { color: colors.textDim }]}>LIFETIME SPENT</Text>
             <Text style={[styles.statValue, { color: colors.text }]}>
               {inrFromMinor(dynamicLifetimeSpend)}
             </Text>
           </View>
-          <View style={[styles.statBox, { backgroundColor: colors.surface }]}>
+          <View style={[styles.statBox, { ...getGlass(colors.isDark).card, borderWidth: 1 }]}>
             <Text style={[styles.statLabel, { color: colors.textDim }]}>VISITS</Text>
             <Text style={[styles.statValue, { color: colors.text }]}>
               {dynamicVisitsCount}
             </Text>
           </View>
-          <View style={[styles.statBox, { backgroundColor: colors.surface }]}>
+          <View style={[styles.statBox, { ...getGlass(colors.isDark).card, borderWidth: 1 }]}>
             <Text style={[styles.statLabel, { color: colors.textDim }]}>AVG BILL</Text>
             <Text style={[styles.statValue, { color: colors.text }]}>
               {inrFromMinor(avgBill)}
@@ -346,7 +349,7 @@ export const CustomerDetailScreen = ({
         </View>
 
         {/* Preferred Stylist & Note Card */}
-        <View style={[styles.notesCard, { backgroundColor: colors.surface }]}>
+        <View style={[styles.notesCard, { ...getGlass(colors.isDark).card, borderWidth: 1 }]}>
           <Text style={[styles.stylistLabel, { color: colors.textDim }]}>
             Preferred stylist · {customer.preferred_stylist_name || 'Assigned Stylist'}
           </Text>
@@ -367,7 +370,7 @@ export const CustomerDetailScreen = ({
               style={[
                 styles.lastOrderCard,
                 {
-                  backgroundColor: colors.surface,
+                  ...getGlass(colors.isDark).card,
                   borderColor: colors.accent,
                 },
               ]}
@@ -467,7 +470,7 @@ export const CustomerDetailScreen = ({
                     styles.historyRow,
                     {
                       borderBottomColor: colors.divider,
-                      backgroundColor: colors.surface,
+                      ...getGlass(colors.isDark).card,
                     },
                   ]}
                 >

@@ -18,6 +18,8 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
 import { useTheme } from '../../theme/ThemeContext';
+import { GlassBackdrop } from '../../components/common/GlassBackdrop';
+import { getGlass } from '../../theme/glass';
 import { useLanguage } from '../../i18n/LanguageContext';
 import { Button } from '../../components/common/Button';
 import { BackIcon, StoreIcon, EditIcon, ChevronDownIcon, ChevronRightIcon, TrashIcon } from '../../components/common/SvgIcons';
@@ -28,6 +30,7 @@ import { supabase } from '../../lib/supabase';
 import { generateInvoicePrefixFromShopName, sanitizeInvoicePrefix } from '../../utils/invoicePrefix';
 import { ChangePhoneModal } from '../../components/accounts/ChangePhoneModal';
 import { SubscriptionHistoryModal } from '../../components/subscription/SubscriptionHistoryModal';
+import { FREE_SALES_LIMIT } from '../../utils/subscriptionUtils';
 
 interface ShopProfileScreenProps {
   shopId?: string;
@@ -47,6 +50,8 @@ interface ShopProfileScreenProps {
   shopCreatedAt?: string | null;
   isPro?: boolean;
   totalSalesCount?: number;
+  /** Free-plan sales limit for this salon */
+  freeSalesLimit?: number;
   onBack: () => void;
   onUpgradePlan?: () => void;
   onUpdateLogo?: (logoPath: string) => Promise<void>;
@@ -77,6 +82,7 @@ export const ShopProfileScreen = ({
   shopCreatedAt,
   isPro = false,
   totalSalesCount = 0,
+  freeSalesLimit = FREE_SALES_LIMIT,
   onBack,
   onUpgradePlan,
   onUpdateLogo,
@@ -382,6 +388,7 @@ export const ShopProfileScreen = ({
 
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.bg }]}>
+      <GlassBackdrop isDark={colors.isDark} />
       <View style={styles.topBar}>
         <Button variant="icon" onPress={onBack}>
           <BackIcon size={18} color={colors.text} />
@@ -398,270 +405,195 @@ export const ShopProfileScreen = ({
         automaticallyAdjustKeyboardInsets={true}
         showsVerticalScrollIndicator={false}
       >
-        {/* Shop Info Card with Change Logo */}
-        <View style={[styles.shopCard, { backgroundColor: colors.surface }]}>
-          <TouchableOpacity
-            activeOpacity={0.8}
-            onPress={handlePickLogo}
-            style={[
-              styles.logoBox,
-              {
-                backgroundColor: colors.accent800,
-                borderColor: 'rgba(217, 164, 65, 0.35)',
-              },
-            ]}
-          >
-            {currentLogo && (currentLogo.startsWith('http') || currentLogo.startsWith('data:') || currentLogo.startsWith('file:') || currentLogo.startsWith('content:')) ? (
-              <Image source={{ uri: currentLogo.trim() }} style={styles.logoImage} onError={() => setCurrentLogo(null)} />
-            ) : (
-              <Text style={{ color: colors.accent100, fontSize: 16, fontWeight: '700' }}>
-                {shopName ? shopName.slice(0, 2).toUpperCase() : 'SO'}
-              </Text>
-            )}
-            <View style={[styles.logoEditBadge, { backgroundColor: colors.accent }]}>
-              <EditIcon size={10} color="#000" />
-            </View>
-          </TouchableOpacity>
+        {/* SHOP + PLAN (one compact block) */}
+        <View style={[styles.cCard, { ...getGlass(colors.isDark).raised, borderWidth: 1 }]}>
+          <View style={styles.cHero}>
+            <TouchableOpacity
+              onPress={() => setShowEditModal(true)}
+              activeOpacity={0.8}
+              style={[styles.cHeroEdit, getGlass(colors.isDark).inset, { borderWidth: 1 }]}
+            >
+              <Text style={{ color: colors.accent, fontSize: 12, fontWeight: '700' }}>{t('edit', 'Edit')}</Text>
+            </TouchableOpacity>
 
-          <View style={{ flex: 1, minWidth: 0 }}>
-            <Text style={[styles.shopName, { color: colors.text }]}>{shopName}</Text>
-            <Text style={[styles.shopAddress, { color: colors.textDim }]}>
+            {/* Floating logo orb: glow ring + raised disc */}
+            <TouchableOpacity
+              activeOpacity={0.85}
+              onPress={handlePickLogo}
+              accessibilityLabel={t('changeLogo', 'Change Logo')}
+              style={[styles.cOrbGlow, { borderColor: colors.accent + '55', shadowColor: colors.accent }]}
+            >
+              <View style={[styles.cOrb, getGlass(colors.isDark).raised, { borderWidth: 1.5, borderColor: colors.accent }]}>
+                {currentLogo && (currentLogo.startsWith('http') || currentLogo.startsWith('data:') || currentLogo.startsWith('file:') || currentLogo.startsWith('content:')) ? (
+                  <Image source={{ uri: currentLogo.trim() }} style={styles.logoImage} onError={() => setCurrentLogo(null)} />
+                ) : (
+                  <Text style={{ color: colors.accent, fontSize: 20, fontWeight: '800' }}>
+                    {shopName ? shopName.slice(0, 2).toUpperCase() : 'SO'}
+                  </Text>
+                )}
+              </View>
+            </TouchableOpacity>
+
+            <Text numberOfLines={2} style={[styles.cHeroName, { color: colors.text }]}>{shopName}</Text>
+            <Text numberOfLines={2} style={[styles.cHeroAddr, { color: colors.textDim }]}>
               {address}, {city} {pinCode}
             </Text>
-            <View style={{ flexDirection: 'row', gap: 14, marginTop: 6, flexWrap: 'wrap' }}>
-              <TouchableOpacity onPress={handlePickLogo}>
-                <Text style={{ color: colors.accent, fontSize: 12, fontWeight: '600' }}>
-                  📷 {t('changeLogo', 'Change Logo')}
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={() => setShowEditModal(true)}
-                style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}
-              >
-                <EditIcon size={13} color={colors.accent} />
-                <Text style={{ color: colors.accent, fontSize: 12, fontWeight: '600' }}>
-                  {t('editProfile', 'Edit Profile')}
-                </Text>
-              </TouchableOpacity>
+
+            <View style={styles.cChipRow}>
+              {[
+                { label: t('owner', 'Owner'), value: ownerName },
+                { label: t('teamLabel', 'Team'), value: `${teamCount}` },
+                { label: 'GST', value: isGstEnabled ? `${gstRateInput || 0}%` : '0%' },
+              ].map((c) => (
+                <View key={c.label} style={[styles.cChip, getGlass(colors.isDark).raised, { borderWidth: 1 }]}>
+                  <Text numberOfLines={1} style={{ color: colors.textDim, fontSize: 10, fontWeight: '600' }}>{c.label}</Text>
+                  <Text numberOfLines={1} style={{ color: colors.text, fontSize: 12, fontWeight: '700', marginTop: 0 }}>{c.value}</Text>
+                </View>
+              ))}
             </View>
           </View>
+
+          <View style={[styles.cDivider, { backgroundColor: colors.divider }]} />
+
+          <View style={styles.cRow}>
+            <Text style={[styles.cLabel, { color: colors.text, flex: 1 }]}>
+              {isPro ? 'Pro plan active' : `${totalSalesCount}/${freeSalesLimit} sales`}
+            </Text>
+            {onUpgradePlan && (
+              <TouchableOpacity
+                style={[styles.cPrimaryBtn, { backgroundColor: colors.accent }]}
+                activeOpacity={0.85}
+                onPress={onUpgradePlan}
+              >
+                <Text style={styles.cPrimaryBtnText}>{isPro ? 'Manage' : 'Upgrade'}</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+          {!isPro && (
+            <View style={[styles.planTrack, { backgroundColor: colors.trackBg, marginTop: 6 }]}>
+              <View
+                style={[
+                  styles.planFill,
+                  {
+                    width: `${Math.min(Math.round((totalSalesCount / freeSalesLimit) * 100), 100)}%`,
+                    backgroundColor: colors.accent,
+                  },
+                ]}
+              />
+            </View>
+          )}
         </View>
 
-        {/* GST ON SERVICES SECTION */}
-        <Text style={[styles.sectionTitle, { color: colors.accent }]}>
-          {t('gstOnServices', 'GST ON SERVICES')}
-        </Text>
-        <View style={[styles.card, { backgroundColor: colors.surface }]}>
-          <View style={styles.gstRow}>
-            <View style={{ flex: 1 }}>
-              <Text style={[styles.rowTitle, { color: colors.text }]}>{t('applyGst', 'Apply GST on Invoices')}</Text>
-              <Text style={[styles.rowSub, { color: colors.textDim }]}>
+        {/* BILLING SETTINGS: GST + invoice + booking hours in one card */}
+        <Text style={[styles.cSection, { color: colors.accent }]}>{t('invoiceSettings', 'INVOICE SETTINGS')}</Text>
+        <View style={[styles.cCard, { ...getGlass(colors.isDark).raised, borderWidth: 1 }]}>
+          {/* GST */}
+          <View style={styles.cRow}>
+            <View style={{ flex: 1, paddingRight: 10 }}>
+              <Text style={[styles.cLabel, { color: colors.text }]}>{t('applyGst', 'Apply GST on Invoices')}</Text>
+              <Text numberOfLines={1} style={[styles.cMeta, { color: colors.textDim }]}>
                 {isGstEnabled
-                  ? (gstRateInput ? t('gstActive', 'Active at {rate}% GST rate').replace('{rate}', gstRateInput) : t('gstActive', 'Active at {rate}% GST rate').replace('{rate}', 'custom'))
+                  ? t('gstActive', 'Active at {rate}% GST rate').replace('{rate}', gstRateInput || 'custom')
                   : t('gstTurnedOff', 'Turned off (0% GST on all bills)')}
               </Text>
             </View>
             <TouchableOpacity
               activeOpacity={0.8}
               onPress={handleToggleGst}
+              accessibilityRole="switch"
+              accessibilityState={{ checked: isGstEnabled }}
               style={[
                 styles.toggleTrack,
-                {
-                  backgroundColor: isGstEnabled ? colors.accent800 : 'transparent',
-                  borderColor: isGstEnabled ? colors.accent : colors.divider,
-                },
+                isGstEnabled
+                  ? { backgroundColor: colors.accent, borderColor: colors.accent }
+                  : { ...getGlass(colors.isDark).inset, borderWidth: 1 },
               ]}
             >
               <View
                 style={[
                   styles.toggleKnob,
-                  {
-                    left: isGstEnabled ? 18 : 2,
-                    backgroundColor: isGstEnabled ? colors.accent200 : colors.textDim,
-                  },
+                  { left: isGstEnabled ? 18 : 2, backgroundColor: isGstEnabled ? '#161826' : colors.textDim },
                 ]}
               />
             </TouchableOpacity>
           </View>
-
           {isGstEnabled && (
-            <View style={[styles.gstInputRow, { borderTopColor: colors.divider }]}>
+            <View style={[styles.cRow, { marginTop: 8, gap: 8 }]}>
               <Text style={{ color: colors.textDim, fontSize: 12 }}>{t('gstRate', 'Custom Rate %:')}</Text>
               <TextInput
-                style={[
-                  styles.gstTextInput,
-                  { backgroundColor: colors.bg, borderColor: colors.divider, color: colors.text },
-                ]}
+                style={[styles.gstTextInput, getGlass(colors.isDark).inset, { borderWidth: 1, color: colors.text }]}
                 keyboardType="numeric"
                 value={gstRateInput}
                 onChangeText={setGstRateInput}
                 placeholder="0"
                 placeholderTextColor={colors.textDim}
               />
-              <TouchableOpacity
-                onPress={handleSaveGstRate}
-                style={[styles.saveGstBtn, { backgroundColor: colors.accent }]}
-              >
-                <Text style={{ color: '#000', fontWeight: '600', fontSize: 12 }}>{t('apply', 'Apply')}</Text>
+              <TouchableOpacity onPress={handleSaveGstRate} style={[styles.cPrimaryBtn, { backgroundColor: colors.accent }]}>
+                <Text style={styles.cPrimaryBtnText}>{t('apply', 'Apply')}</Text>
               </TouchableOpacity>
             </View>
           )}
-        </View>
 
-        {/* INVOICE SETTINGS */}
-        <Text style={[styles.sectionTitle, { color: colors.accent }]}>
-          {t('invoiceSettings', 'INVOICE SETTINGS')}
-        </Text>
-        <View style={[styles.card, { backgroundColor: colors.surface }]}>
-          {/* Prefix Row */}
-          <View
-            style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              paddingBottom: 14,
-              borderBottomWidth: 1,
-              borderBottomColor: colors.divider,
-            }}
-          >
-            <View style={{ flex: 1, marginRight: 12 }}>
-              <Text style={[styles.rowTitle, { color: colors.text }]}>
-                {t('invoicePrefix', 'Invoice Prefix')}
+          <View style={[styles.cDivider, { backgroundColor: colors.divider }]} />
+
+          {/* Invoice prefix */}
+          <View style={styles.cRow}>
+            <View style={{ flex: 1, paddingRight: 10 }}>
+              <Text style={[styles.cLabel, { color: colors.text }]}>{t('invoicePrefix', 'Invoice Prefix')}</Text>
+              <Text numberOfLines={1} style={[styles.cMeta, { color: colors.textDim }]}>
+                {currentPrefix} · {numberingMode === 'monthly' ? monthlyPreview : yearlyPreview}
               </Text>
-              <Text style={[styles.rowSub, { color: colors.textDim }]}>
-                {t('invoicePrefixSub', 'Configured prefix for newly generated bills and invoices')}
-              </Text>
-              <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8, gap: 8 }}>
-                <View
-                  style={{
-                    backgroundColor: colors.bg,
-                    borderWidth: 1,
-                    borderColor: colors.accent,
-                    borderRadius: radii.sm,
-                    paddingVertical: 5,
-                    paddingHorizontal: 12,
-                  }}
-                >
-                  <Text style={{ fontSize: 14, fontWeight: '800', color: colors.accent, letterSpacing: 1 }}>
-                    [ {currentPrefix} ]
-                  </Text>
-                </View>
-                <Text style={{ fontSize: 11.5, color: colors.textMuted }}>
-                  Sample: {numberingMode === 'monthly' ? monthlyPreview : yearlyPreview}
-                </Text>
-              </View>
             </View>
-
             <TouchableOpacity
               activeOpacity={0.8}
               onPress={() => {
                 setEditPrefixInput(currentPrefix);
                 setShowPrefixModal(true);
               }}
-              style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                backgroundColor: colors.accent,
-                paddingVertical: 7,
-                paddingHorizontal: 13,
-                borderRadius: radii.sm,
-                gap: 5,
-              }}
+              style={[styles.cPillBtn, { borderColor: colors.accent }]}
             >
-              <EditIcon size={13} color="#000" />
-              <Text style={{ color: '#000', fontWeight: '700', fontSize: 12 }}>{t('edit', 'Edit')}</Text>
+              <Text style={{ color: colors.accent, fontSize: 12, fontWeight: '700' }}>{t('edit', 'Edit')}</Text>
             </TouchableOpacity>
           </View>
 
-          {/* Numbering Sequence Mode */}
-          <View style={{ paddingTop: 14 }}>
-            <Text style={[styles.rowTitle, { color: colors.text }]}>
-              {t('numberingMode', 'Numbering Sequence Mode')}
-            </Text>
-            <Text style={[styles.rowSub, { color: colors.textDim, marginBottom: 12 }]}>
-              {t('numberingSub', 'Choose whether invoice numbers reset each month or maintain a continuous yearly sequence.')}
-            </Text>
-
-            <View style={{ flexDirection: 'row', gap: 10 }}>
-              {/* Monthly Option */}
-              <TouchableOpacity
-                activeOpacity={0.8}
-                onPress={() => handleSelectNumberingMode('monthly')}
-                style={{
-                  flex: 1,
-                  padding: 12,
-                  borderRadius: radii.md,
-                  borderWidth: 1.5,
-                  borderColor: numberingMode === 'monthly' ? colors.accent : colors.divider,
-                  backgroundColor: numberingMode === 'monthly' ? colors.accent900 : colors.bg,
-                }}
-              >
-                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
-                  <Text style={{ fontSize: 13, fontWeight: '700', color: numberingMode === 'monthly' ? colors.accent : colors.text }}>
-                    Monthly Reset
+          {/* Numbering mode */}
+          <View style={styles.cSegment}>
+            {([
+              { id: 'monthly' as const, title: 'Monthly Reset', sub: monthlyPreview },
+              { id: 'yearly' as const, title: 'Yearly Sequence', sub: yearlyPreview },
+            ]).map((opt) => {
+              const on = numberingMode === opt.id;
+              return (
+                <TouchableOpacity
+                  key={opt.id}
+                  activeOpacity={0.8}
+                  onPress={() => handleSelectNumberingMode(opt.id)}
+                  style={[
+                    styles.cSegmentTab,
+                    on
+                      ? { borderColor: colors.accent, backgroundColor: colors.accent + '1F' }
+                      : { ...getGlass(colors.isDark).inset, borderWidth: 1.5 },
+                  ]}
+                >
+                  <Text numberOfLines={1} style={{ fontSize: 12.5, fontWeight: '700', color: on ? colors.accent : colors.text }}>
+                    {opt.title}
                   </Text>
-                  {numberingMode === 'monthly' && (
-                    <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: colors.accent }} />
-                  )}
-                </View>
-                <Text style={{ fontSize: 11, color: colors.textDim }}>
-                  Resets to 0001 each month
-                </Text>
-                <Text style={{ fontSize: 12, fontWeight: '600', color: numberingMode === 'monthly' ? colors.accent : colors.textMuted, marginTop: 6 }}>
-                  e.g. {monthlyPreview}
-                </Text>
-              </TouchableOpacity>
-
-              {/* Yearly Option */}
-              <TouchableOpacity
-                activeOpacity={0.8}
-                onPress={() => handleSelectNumberingMode('yearly')}
-                style={{
-                  flex: 1,
-                  padding: 12,
-                  borderRadius: radii.md,
-                  borderWidth: 1.5,
-                  borderColor: numberingMode === 'yearly' ? colors.accent : colors.divider,
-                  backgroundColor: numberingMode === 'yearly' ? colors.accent900 : colors.bg,
-                }}
-              >
-                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
-                  <Text style={{ fontSize: 13, fontWeight: '700', color: numberingMode === 'yearly' ? colors.accent : colors.text }}>
-                    Yearly Sequence
+                  <Text numberOfLines={1} style={{ fontSize: 11, color: colors.textDim, marginTop: 1 }}>
+                    {opt.sub}
                   </Text>
-                  {numberingMode === 'yearly' && (
-                    <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: colors.accent }} />
-                  )}
-                </View>
-                <Text style={{ fontSize: 11, color: colors.textDim }}>
-                  Continues through year
-                </Text>
-                <Text style={{ fontSize: 12, fontWeight: '600', color: numberingMode === 'yearly' ? colors.accent : colors.textMuted, marginTop: 6 }}>
-                  e.g. {yearlyPreview}
-                </Text>
-              </TouchableOpacity>
-            </View>
+                </TouchableOpacity>
+              );
+            })}
           </View>
 
-          <View style={{ marginTop: 12, paddingTop: 10, borderTopWidth: 1, borderTopColor: colors.divider }}>
-            <Text style={{ fontSize: 11.5, color: colors.textSubtle }}>
-              ⓘ Existing invoice numbers will never change. Only newly created bills follow the selected format.
-            </Text>
-          </View>
-        </View>
+          <View style={[styles.cDivider, { backgroundColor: colors.divider }]} />
 
-        {/* APPOINTMENT BOOKING HOURS */}
-        <Text style={[styles.sectionTitle, { color: colors.accent }]}>
-          {t('appointmentHours', 'APPOINTMENT BOOKING HOURS')}
-        </Text>
-        <View style={[styles.card, { backgroundColor: colors.surface }]}>
-          <View style={styles.gstRow}>
-            <View style={{ flex: 1 }}>
-              <Text style={[styles.rowTitle, { color: colors.text }]}>
+          {/* Booking hours */}
+          <View style={styles.cRow}>
+            <View style={{ flex: 1, paddingRight: 10 }}>
+              <Text style={[styles.cLabel, { color: colors.text }]}>{t('appointmentHours', 'APPOINTMENT BOOKING HOURS')}</Text>
+              <Text numberOfLines={1} style={[styles.cMeta, { color: colors.textDim }]}>
                 {bookingStartTime} — {bookingEndTime}
-              </Text>
-              <Text style={[styles.rowSub, { color: colors.textDim }]}>
-                {t('appointmentHoursSub', 'Default daily appointment booking slot range')}
               </Text>
             </View>
             <TouchableOpacity
@@ -671,72 +603,42 @@ export const ShopProfileScreen = ({
                 setTempEndTime(bookingEndTime);
                 setShowHoursModal(true);
               }}
-              style={{
-                backgroundColor: colors.accent,
-                paddingVertical: 7,
-                paddingHorizontal: 14,
-                borderRadius: radii.sm,
-              }}
+              style={[styles.cPillBtn, { borderColor: colors.accent }]}
             >
-              <Text style={{ color: '#000', fontWeight: '700', fontSize: 12 }}>
-                {t('edit', 'Edit')}
-              </Text>
+              <Text style={{ color: colors.accent, fontSize: 12, fontWeight: '700' }}>{t('edit', 'Edit')}</Text>
             </TouchableOpacity>
           </View>
         </View>
 
-        {/* Details Rows */}
-        <View style={styles.detailsList}>
-          <View style={[styles.detailRow, { backgroundColor: colors.surface }]}>
-            <Text style={[styles.detailLabel, { color: colors.textMuted }]}>{t('owner', 'Owner')}</Text>
-            <Text style={[styles.detailValue, { color: colors.text }]}>{ownerName}</Text>
-          </View>
-          <View style={[styles.detailRow, { backgroundColor: colors.surface }]}>
-            <Text style={[styles.detailLabel, { color: colors.textMuted }]}>{t('loginNumber', 'Login number')}</Text>
-            <Text style={[styles.detailValue, { color: colors.text }]}>+91 {phone}</Text>
-          </View>
-          <View style={[styles.detailRow, { backgroundColor: colors.surface }]}>
-            <Text style={[styles.detailLabel, { color: colors.textMuted }]}>{t('gstinLabel', 'GSTIN')}</Text>
-            <Text style={[styles.detailValue, { color: colors.text }]}>{gstin || 'None'}</Text>
-          </View>
-          <View style={[styles.detailRow, { backgroundColor: colors.surface }]}>
-            <Text style={[styles.detailLabel, { color: colors.textMuted }]}>UPI ID</Text>
-            <Text style={[styles.detailValue, { color: currentUpiId ? colors.accent : colors.textDim, fontWeight: currentUpiId ? '700' : '400' }]}>
-              {currentUpiId || t('notSpecified', 'Not specified')}
-            </Text>
-          </View>
-          <View style={[styles.detailRow, { backgroundColor: colors.surface }]}>
-            <Text style={[styles.detailLabel, { color: colors.textMuted }]}>{t('teamLabel', 'Team')}</Text>
-            <Text style={[styles.detailValue, { color: colors.text }]}>{teamCount} {t('stylistsCountLabel', 'stylists')}</Text>
-          </View>
-          <View style={[styles.detailRow, { backgroundColor: colors.surface }]}>
-            <Text style={[styles.detailLabel, { color: colors.textMuted }]}>{t('invoicePrefixLabel', 'Invoice prefix')}</Text>
-            <Text style={[styles.detailValue, { color: colors.accent, fontWeight: '700' }]}>{currentPrefix}</Text>
-          </View>
-        </View>
-
-        {/* EDIT PROFILE */}
-        <View style={{ marginTop: 12, marginBottom: 16 }}>
-          <Button
-            label={t('editProfile', 'Edit Salon Profile')}
-            icon={<EditIcon size={16} color="#000" />}
-            variant="primary"
-            block
-            onPress={() => setShowEditModal(true)}
-          />
+        {/* SALON DETAILS: one card, thin rows */}
+        <Text style={[styles.cSection, { color: colors.accent }]}>{t('shopProfile', 'Shop Profile').toUpperCase()}</Text>
+        <View style={[styles.cCard, { ...getGlass(colors.isDark).raised, borderWidth: 1, paddingVertical: 4 }]}>
+          {[
+            { label: t('owner', 'Owner'), value: ownerName, color: colors.text },
+            { label: t('loginNumber', 'Login number'), value: `+91 ${phone}`, color: colors.text },
+            { label: t('gstinLabel', 'GSTIN'), value: gstin || 'None', color: colors.text },
+            { label: 'UPI ID', value: currentUpiId || t('notSpecified', 'Not specified'), color: currentUpiId ? colors.accent : colors.textDim },
+            { label: t('teamLabel', 'Team'), value: `${teamCount} ${t('stylistsCountLabel', 'stylists')}`, color: colors.text },
+          ].map((row, idx) => (
+            <View
+              key={row.label}
+              style={[styles.cDetailRow, idx > 0 && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.divider }]}
+            >
+              <Text style={[styles.cMeta, { color: colors.textMuted, flexShrink: 0 }]}>{row.label}</Text>
+              <Text numberOfLines={1} style={[styles.cDetailValue, { color: row.color }]}>{row.value}</Text>
+            </View>
+          ))}
         </View>
 
         {/* SUBSCRIPTION & BILLING */}
-        <Text style={[styles.sectionTitle, { color: colors.accent }]}>
-          {t('subscriptionAndBilling', 'SUBSCRIPTION & BILLING')}
-        </Text>
-        <View style={[styles.card, { backgroundColor: colors.surface, marginBottom: 16 }]}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-            <View style={{ flex: 1, marginRight: 8 }}>
-              <Text style={[styles.rowTitle, { color: colors.text }]}>
+        <Text style={[styles.cSection, { color: colors.accent }]}>{t('subscriptionAndBilling', 'SUBSCRIPTION & BILLING')}</Text>
+        <View style={[styles.cCard, { ...getGlass(colors.isDark).raised, borderWidth: 1 }]}>
+          <View style={styles.cRow}>
+            <View style={{ flex: 1, paddingRight: 8 }}>
+              <Text style={[styles.cLabel, { color: colors.text }]}>
                 {isPro ? 'StyleFleet Pro' : '30-Day Free Trial'}
               </Text>
-              <Text style={[styles.rowSub, { color: colors.textDim }]}>
+              <Text numberOfLines={2} style={[styles.cMeta, { color: colors.textDim }]}>
                 {isPro
                   ? 'Unlimited bills, advanced reports & VIP salon features'
                   : 'Enjoying full-featured 30-day salon management trial'}
@@ -752,66 +654,34 @@ export const ShopProfileScreen = ({
                 borderRadius: radii.sm,
               }}
             >
-              <Text
-                style={{
-                  color: isPro ? '#22C55E' : colors.accent,
-                  fontSize: 10,
-                  fontWeight: '700',
-                  letterSpacing: 0.5,
-                }}
-              >
-                {isPro ? '✓ ACTIVE' : '👑 TRIAL'}
+              <Text style={{ color: isPro ? '#22C55E' : colors.accent, fontSize: 10, fontWeight: '700', letterSpacing: 0.5 }}>
+                {isPro ? 'ACTIVE' : 'TRIAL'}
               </Text>
             </View>
           </View>
-
-          <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
-            {/* View Billing History Button */}
+          <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
             <TouchableOpacity
               activeOpacity={0.8}
               onPress={() => setShowSubscriptionHistoryModal(true)}
-              style={{
-                flex: 1,
-                flexDirection: 'row',
-                alignItems: 'center',
-                justifyContent: 'center',
-                backgroundColor: colors.bg,
-                borderColor: colors.divider,
-                borderWidth: 1,
-                paddingVertical: 10,
-                borderRadius: radii.sm,
-                gap: 6,
-              }}
+              style={[styles.cGhostBtn, { borderColor: colors.divider }]}
             >
-              <Text style={{ color: colors.text, fontSize: 12.5, fontWeight: '600' }}>
-                📜 Billing History
-              </Text>
+              <Text numberOfLines={1} style={{ color: colors.text, fontSize: 12.5, fontWeight: '600' }}>Billing History</Text>
             </TouchableOpacity>
-
-            {/* Upgrade / Manage Button */}
             {onUpgradePlan && (
               <TouchableOpacity
                 activeOpacity={0.85}
                 onPress={onUpgradePlan}
-                style={{
-                  flex: 1,
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  backgroundColor: colors.accent,
-                  paddingVertical: 10,
-                  borderRadius: radii.sm,
-                }}
+                style={[styles.cGhostBtn, { backgroundColor: colors.accent, borderColor: colors.accent }]}
               >
-                <Text style={{ color: '#0D0F14', fontSize: 12.5, fontWeight: '700' }}>
-                  {isPro ? 'Manage Plan →' : 'Upgrade Plan →'}
+                <Text numberOfLines={1} style={{ color: '#0D0F14', fontSize: 12.5, fontWeight: '700' }}>
+                  {isPro ? 'Manage Plan' : 'Upgrade Plan'}
                 </Text>
               </TouchableOpacity>
             )}
           </View>
         </View>
 
-
-        <View style={{ height: 32 }} />
+        <View style={{ height: 16 }} />
       </ScrollView>
 
         {/* EDIT SALON PROFILE MODAL (Saves directly to Supabase) */}
@@ -1226,6 +1096,7 @@ export const ShopProfileScreen = ({
       shopName={shopName}
       registrationDateIso={shopCreatedAt}
       totalSalesCount={totalSalesCount}
+      freeSalesLimit={freeSalesLimit}
       onClose={() => setShowSubscriptionHistoryModal(false)}
       onUpgradePlan={onUpgradePlan}
     />
@@ -1234,6 +1105,92 @@ export const ShopProfileScreen = ({
 };
 
 const styles = StyleSheet.create({
+  cCard: { padding: 10, borderRadius: radii.md, marginBottom: 8 },
+  cSection: { fontSize: 10.5, fontWeight: '700', letterSpacing: 1, marginTop: 4, marginBottom: 6 },
+  cHero: { alignItems: 'center', paddingTop: 0 },
+  cHeroEdit: { position: 'absolute', right: 0, top: 0, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 14, zIndex: 2 },
+  cOrbGlow: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.5,
+    shadowRadius: 12,
+  },
+  cOrb: { width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
+  cHeroName: { fontSize: 16, fontWeight: '800', letterSpacing: -0.3, marginTop: 6, textAlign: 'center' },
+  cHeroAddr: { fontSize: 11.5, marginTop: 1, textAlign: 'center', paddingHorizontal: 10 },
+  cChipRow: { flexDirection: 'row', gap: 6, marginTop: 8, alignSelf: 'stretch' },
+  cChip: { flex: 1, borderRadius: 12, paddingVertical: 5, paddingHorizontal: 8, alignItems: 'center' },
+  cShopRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  cLogo: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  cShopName: { fontSize: 15, fontWeight: '700' },
+  cMeta: { fontSize: 11.5, marginTop: 1 },
+  cLabel: { fontSize: 13.5, fontWeight: '600' },
+  cRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  cDivider: { height: StyleSheet.hairlineWidth, marginVertical: 8 },
+  cPillBtn: { paddingHorizontal: 12, paddingVertical: 5, borderRadius: 14, borderWidth: 1 },
+  cPrimaryBtn: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14 },
+  cPrimaryBtnText: { color: '#0D0F14', fontSize: 12, fontWeight: '700' },
+  cSegment: { flexDirection: 'row', gap: 8, marginTop: 10 },
+  cSegmentTab: { flex: 1, paddingVertical: 8, paddingHorizontal: 10, borderRadius: radii.sm, borderWidth: 1.5 },
+  cDetailRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12, paddingVertical: 9 },
+  cDetailValue: { flex: 1, textAlign: 'right', fontSize: 13, fontWeight: '600' },
+  cGhostBtn: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 9,
+    borderRadius: radii.sm,
+    borderWidth: 1,
+  },
+  planCard: {
+    borderRadius: radii.md,
+    borderWidth: 1,
+    padding: 14,
+    marginBottom: 14,
+  },
+  planHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  planCountText: {
+    fontSize: 15,
+    fontWeight: '700',
+    letterSpacing: 0.3,
+  },
+  planBtn: {
+    paddingVertical: 6,
+    paddingHorizontal: 14,
+    borderRadius: radii.sm,
+  },
+  planBtnText: {
+    color: '#0D0F14',
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.4,
+  },
+  planTrack: {
+    height: 8,
+    borderRadius: 4,
+    overflow: 'hidden',
+  },
+  planFill: {
+    height: '100%',
+    borderRadius: 4,
+  },
   safeArea: {
     flex: 1,
   },
@@ -1329,7 +1286,7 @@ const styles = StyleSheet.create({
   },
   gstTextInput: {
     width: 60,
-    height: 36,
+    minHeight: 36,
     borderWidth: 1,
     borderRadius: radii.sm,
     textAlign: 'center',
@@ -1337,7 +1294,7 @@ const styles = StyleSheet.create({
   },
   saveGstBtn: {
     paddingHorizontal: 12,
-    height: 36,
+    minHeight: 36,
     borderRadius: radii.sm,
     alignItems: 'center',
     justifyContent: 'center',
@@ -1429,7 +1386,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
   },
   modalAddBtn: {
-    height: 44,
+    minHeight: 44,
     borderRadius: radii.md,
     alignItems: 'center',
     justifyContent: 'center',

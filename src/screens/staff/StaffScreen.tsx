@@ -17,21 +17,28 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '../../theme/ThemeContext';
+import { GlassBackdrop } from '../../components/common/GlassBackdrop';
+import { getGlass } from '../../theme/glass';
 import { useLanguage } from '../../i18n/LanguageContext';
 import { Button } from '../../components/common/Button';
 import { BackIcon, PlusIcon, EditIcon, TrashIcon, MoreVerticalIcon, PdfIcon, ExcelIcon, LockIcon, StarIcon, UsersIcon, PhoneCallIcon, WhatsAppIcon } from '../../components/common/SvgIcons';
-import { StaffMember, Period, Bill, StylistPermissions, DEFAULT_STYLIST_PERMISSIONS } from '../../types/domain';
+import { StaffMember, Period, Bill, StylistPermissions } from '../../types/domain';
+import { StylistPermissionsModal } from '../../components/staff/StylistPermissionsModal';
 import { staffRepository } from '../../repositories/staffRepository';
 import { QuickContactPickerModal } from '../../components/customers/QuickContactPickerModal';
 import { inrFromMinor, shortInrFromMinor, getInitials } from '../../utils/format';
+import { calculateRebookPercent } from '../../utils/stylistStats';
 import { radii, shadows } from '../../theme/spacing';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import * as FileSystem from 'expo-file-system/legacy';
 import { STYLEFLEET_PLAY_STORE_URL } from '../../constants/app';
+import { usePullRefresh } from '../../hooks/usePullRefresh';
+import { FREE_SALES_LIMIT } from '../../utils/subscriptionUtils';
 export { STYLEFLEET_PLAY_STORE_URL };
 
 interface StaffScreenProps {
+  onRefresh?: () => Promise<void>;
   staff: StaffMember[];
   bills?: Bill[];
   shopId?: string;
@@ -39,6 +46,8 @@ interface StaffScreenProps {
   ownerName?: string;
   isPro?: boolean;
   totalSalesCount?: number;
+  /** Free-plan sales limit for this salon */
+  freeSalesLimit?: number;
   onUpgradePlan?: () => void;
   onBack: () => void;
   onAddStaff?: (name: string, role: string, phone: string) => Promise<void>;
@@ -62,6 +71,7 @@ interface StylistReportRow {
 }
 
 export const StaffScreen = ({
+  onRefresh,
   staff,
   bills = [],
   shopId,
@@ -69,6 +79,7 @@ export const StaffScreen = ({
   ownerName = 'Owner',
   isPro = false,
   totalSalesCount = 0,
+  freeSalesLimit = FREE_SALES_LIMIT,
   onUpgradePlan,
   onBack,
   onAddStaff,
@@ -79,6 +90,7 @@ export const StaffScreen = ({
   onUpdateStaffRating,
   onManage,
 }: StaffScreenProps) => {
+  const pullRefresh = usePullRefresh(onRefresh);
   const { colors } = useTheme();
   const { t } = useLanguage();
   const [period, setPeriod] = useState<Period>('Day');
@@ -114,8 +126,16 @@ export const StaffScreen = ({
 
   // Stylist Permissions Modal
   const [permissionsStaff, setPermissionsStaff] = useState<StaffMember | null>(null);
-  const [tempPermissions, setTempPermissions] = useState<StylistPermissions>(DEFAULT_STYLIST_PERMISSIONS);
-  const [isSavingPermissions, setIsSavingPermissions] = useState(false);
+
+  const handleSavePermissions = async (staffId: string, permissions: StylistPermissions) => {
+    if (onUpdateStaffPermissions) {
+      await onUpdateStaffPermissions(staffId, permissions);
+    } else if (shopId) {
+      await staffRepository.updateStaffPermissions(shopId, staffId, permissions);
+    } else {
+      throw new Error('No salon selected');
+    }
+  };
 
   // Rating Modal state
   const [ratingStaff, setRatingStaff] = useState<StaffMember | null>(null);
@@ -147,7 +167,19 @@ export const StaffScreen = ({
     }
   };
 
-  const isReportDownloadLocked = !isPro && totalSalesCount >= 100;
+  const [stylistLimit, setStylistLimit] = useState(3);
+  useEffect(() => {
+    if (!shopId) return;
+    let mounted = true;
+    staffRepository.getStylistLimit(shopId).then((limit) => {
+      if (mounted) setStylistLimit(limit);
+    });
+    return () => {
+      mounted = false;
+    };
+  }, [shopId]);
+
+  const isReportDownloadLocked =!isPro && totalSalesCount >= freeSalesLimit;
 
   const handleSendInvite = async (s: StaffMember) => {
     const cleanPhone = (s.phone || '').replace(/\D/g, '').slice(-10);
@@ -162,7 +194,8 @@ export const StaffScreen = ({
       `Tap here to open StyleFleet and login as Stylist:\n` +
       `${inviteDeepLink}\n\n` +
       `Or download StyleFleet from the Play Store:\n` +
-      `${STYLEFLEET_PLAY_STORE_URL}`;
+      `${STYLEFLEET_PLAY_STORE_URL}\n\n` +
+      `If the link doesn't open: open StyleFleet, tick "Login as Stylist" and enter this mobile number: ${cleanPhone}`;
 
     const nativeUrl = `whatsapp://send?phone=91${cleanPhone}&text=${encodeURIComponent(message)}`;
     const webUrl = `https://wa.me/91${cleanPhone}?text=${encodeURIComponent(message)}`;
@@ -255,6 +288,8 @@ export const StaffScreen = ({
         ...s,
         period_rev_minor: revMinor,
         period_service_count: count,
+        // all-time, from real bills (not limited to the Day / Week / Month shown above)
+        rebook_percent: calculateRebookPercent(bills, s),
       };
     });
 
@@ -596,7 +631,7 @@ export const StaffScreen = ({
   };
 
   const handleAddStylistClick = () => {
-    if (staff.length >= 3) {
+    if (staff.filter((s) => s.is_active !== false).length >= stylistLimit) {
       setShowSupportModal(true);
     } else {
       setEditingStaff(null);
@@ -712,6 +747,7 @@ export const StaffScreen = ({
 
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.bg }]}>
+      <GlassBackdrop isDark={colors.isDark} />
       <View style={styles.header}>
         <View style={styles.topBar}>
           <Button variant="icon" onPress={onBack}>
@@ -757,13 +793,13 @@ export const StaffScreen = ({
         </View>
       </View>
 
-      <ScrollView contentContainerStyle={styles.scrollContent}>
+      <ScrollView contentContainerStyle={styles.scrollContent} refreshControl={pullRefresh}>
         {/* Stylist Performance Report Header Card */}
-        <View style={[styles.perfReportCard, { backgroundColor: colors.surface, borderColor: colors.divider }]}>
-          <View style={{ flex: 1, marginRight: 8 }}>
+        <View style={[styles.perfReportCard, { ...getGlass(colors.isDark).card, borderWidth: 1 }]}>
+          <View>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
               <Text style={{ fontSize: 16 }}>📈</Text>
-              <Text style={[styles.perfReportTitle, { color: colors.text }]}>
+              <Text style={[styles.perfReportTitle, { color: colors.text, flex: 1 }]}>
                 {t('stylistPerformanceReport', 'Stylist Performance Report')}
               </Text>
             </View>
@@ -820,7 +856,7 @@ export const StaffScreen = ({
             return (
               <View
                 key={s.id}
-                style={[styles.staffCard, { backgroundColor: colors.surface }]}
+                style={[styles.staffCard, { ...getGlass(colors.isDark).card, borderWidth: 1 }]}
               >
                 {/* Header row */}
                 <View style={styles.cardHeaderRow}>
@@ -893,7 +929,7 @@ export const StaffScreen = ({
                 {/* Metrics Row & Invitation Status */}
                 <View style={styles.metricsRow}>
                   <Text style={[styles.metricItem, { color: colors.textMuted }]}>
-                    Rebook {s.rebook_rate}
+                    Rebook {s.rebook_percent === null ? '–' : `${s.rebook_percent}%`}
                   </Text>
                   <TouchableOpacity
                     activeOpacity={0.7}
@@ -1151,7 +1187,7 @@ export const StaffScreen = ({
               </TouchableOpacity>
             </View>
             <Text style={{ color: colors.textMuted, fontSize: 13, lineHeight: 20, marginTop: 8 }}>
-              You have reached the maximum allowed limit of 3 stylists for your salon account. To add more stylist slots, please contact StyleFleet support.
+              You have reached the maximum allowed limit of {stylistLimit} active stylists for your salon account. To add more stylist slots, please contact StyleFleet support.
             </Text>
             <TouchableOpacity
               activeOpacity={0.8}
@@ -1194,7 +1230,7 @@ export const StaffScreen = ({
                   Stylist Performance Report
                 </Text>
                 <Text style={[styles.reportModalSub, { color: colors.textDim }]}>
-                  {shopName} · {period} Report ({performanceRows.length} members)
+                  {shopName} {'\u00b7'} {period} {'\u00b7'} {performanceRows.length} {performanceRows.length === 1 ? 'member' : 'members'}
                 </Text>
               </View>
               <TouchableOpacity
@@ -1206,83 +1242,139 @@ export const StaffScreen = ({
               </TouchableOpacity>
             </View>
 
-            {/* Total KPI Row */}
-            <View
-              style={[
-                styles.reportKpiRow,
-                { borderColor: colors.divider, backgroundColor: colors.bg },
-              ]}
-            >
-              <View style={{ flex: 1 }}>
-                <Text style={[styles.reportKpiLabel, { color: colors.textDim }]}>Total Billed</Text>
-                <Text style={[styles.reportKpiVal, { color: colors.accent }]}>
-                  {inrFromMinor(totalRevenueMinor)}
-                </Text>
-              </View>
-              <View style={{ flex: 1, alignItems: 'center' }}>
-                <Text style={[styles.reportKpiLabel, { color: colors.textDim }]}>Services</Text>
-                <Text style={[styles.reportKpiVal, { color: colors.text }]}>{totalServices}</Text>
-              </View>
-              <View style={{ flex: 1, alignItems: 'flex-end' }}>
-                <Text style={[styles.reportKpiLabel, { color: colors.textDim }]}>Members</Text>
-                <Text style={[styles.reportKpiVal, { color: colors.text }]}>
-                  {performanceRows.length}
-                </Text>
-              </View>
+            {/* Summary tiles */}
+            <View style={{ flexDirection: 'row', gap: 8 }}>
+              {[
+                { label: 'Total billed', value: shortInrFromMinor(totalRevenueMinor), tone: colors.accent },
+                { label: 'Services', value: String(totalServices), tone: colors.text },
+                {
+                  label: 'Avg / service',
+                  value: totalServices > 0 ? shortInrFromMinor(Math.round(totalRevenueMinor / totalServices)) : '\u2013',
+                  tone: colors.text,
+                },
+              ].map((k) => (
+                <View
+                  key={k.label}
+                  style={{
+                    flex: 1,
+                    paddingVertical: 8,
+                    paddingHorizontal: 9,
+                    borderRadius: 12,
+                    borderWidth: 1,
+                    borderColor: colors.divider,
+                    backgroundColor: colors.bg,
+                  }}
+                >
+                  <Text style={{ color: colors.textDim, fontSize: 10.5, fontWeight: '600' }} numberOfLines={1}>
+                    {k.label}
+                  </Text>
+                  <Text style={{ color: k.tone, fontSize: 16, fontWeight: '800', marginTop: 2 }} numberOfLines={1}>
+                    {k.value}
+                  </Text>
+                </View>
+              ))}
             </View>
 
-            {/* Performance Rows Scroll */}
-            <ScrollView style={{ maxHeight: 340, marginVertical: 10 }}>
+            {/* Ranked performance */}
+            <ScrollView style={{ maxHeight: 360, marginTop: 10, marginBottom: 6 }} showsVerticalScrollIndicator={false}>
               {performanceRows.length === 0 ? (
                 <View style={{ paddingVertical: 24, alignItems: 'center' }}>
                   <Text style={{ color: colors.textDim, fontSize: 13 }}>No stylist activity in this period</Text>
                 </View>
               ) : (
-                performanceRows.map((item, idx) => (
-                  <View
-                    key={item.id}
-                    style={[
-                      styles.reportRow,
-                      {
-                        borderBottomColor:
-                          idx < performanceRows.length - 1 ? colors.divider : 'transparent',
-                      },
-                    ]}
-                  >
-                    <View style={{ flex: 1, marginRight: 8 }}>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                        <Text style={[styles.reportStaffName, { color: colors.text }]}>
-                          {item.name}
-                        </Text>
-                        {item.isOwner && (
-                          <View
-                            style={[
-                              styles.ownerBadge,
-                              { backgroundColor: 'rgba(217, 164, 65, 0.15)' },
-                            ]}
+                performanceRows.map((item, idx) => {
+                  const top = idx === 0 && item.salesMinor > 0;
+                  const medal = ['#E3B93C', '#B8C2D6', '#C98A5B'][idx] || colors.divider;
+                  const pct = Math.max(0, Math.min(100, item.sharePct));
+                  return (
+                    <View
+                      key={item.id}
+                      style={{
+                        marginBottom: 7,
+                        padding: 10,
+                        borderRadius: 14,
+                        borderWidth: top ? 1.5 : 1,
+                        borderColor: top ? colors.accent : colors.divider,
+                        backgroundColor: top ? colors.accent + '14' : colors.bg,
+                      }}
+                    >
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                        <View
+                          style={{
+                            width: 24,
+                            height: 24,
+                            borderRadius: 12,
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            backgroundColor: idx < 3 && item.salesMinor > 0 ? medal : 'transparent',
+                            borderWidth: idx < 3 && item.salesMinor > 0 ? 0 : 1,
+                            borderColor: colors.divider,
+                          }}
+                        >
+                          <Text
+                            style={{
+                              color: idx < 3 && item.salesMinor > 0 ? '#1A1A1A' : colors.textDim,
+                              fontSize: 11.5,
+                              fontWeight: '800',
+                            }}
                           >
-                            <Text style={[styles.ownerBadgeText, { color: colors.accent }]}>
-                              Owner
-                            </Text>
-                          </View>
-                        )}
-                      </View>
-                      <Text style={[styles.reportStaffRole, { color: colors.textDim }]}>
-                        {item.role} · {item.servicesCount}{' '}
-                        {item.servicesCount === 1 ? 'service' : 'services'}
-                      </Text>
-                    </View>
+                            {idx + 1}
+                          </Text>
+                        </View>
 
-                    <View style={{ alignItems: 'flex-end' }}>
-                      <Text style={[styles.reportSalesAmt, { color: colors.text }]}>
-                        {inrFromMinor(item.salesMinor)}
-                      </Text>
-                      <Text style={[styles.reportSharePct, { color: colors.accent }]}>
-                        {item.sharePct}% share
-                      </Text>
+                        <View
+                          style={{
+                            width: 34,
+                            height: 34,
+                            borderRadius: 17,
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            backgroundColor: colors.accent + '24',
+                          }}
+                        >
+                          <Text style={{ color: colors.accent, fontSize: 12, fontWeight: '800' }}>
+                            {getInitials(item.name)}
+                          </Text>
+                        </View>
+
+                        <View style={{ flex: 1 }}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                            <Text style={{ color: colors.text, fontSize: 13.5, fontWeight: '700', flexShrink: 1 }} numberOfLines={1}>
+                              {item.name}
+                            </Text>
+                            {item.isOwner && (
+                              <View style={[styles.ownerBadge, { backgroundColor: 'rgba(217, 164, 65, 0.15)' }]}>
+                                <Text style={[styles.ownerBadgeText, { color: colors.accent }]}>Owner</Text>
+                              </View>
+                            )}
+                            {top && (
+                              <View style={[styles.ownerBadge, { backgroundColor: colors.accent }]}>
+                                <Text style={[styles.ownerBadgeText, { color: '#0D0F14' }]}>Top performer</Text>
+                              </View>
+                            )}
+                          </View>
+                          <Text style={{ color: colors.textDim, fontSize: 11, marginTop: 1 }} numberOfLines={1}>
+                            {item.role} {'\u00b7'} {item.servicesCount} {item.servicesCount === 1 ? 'service' : 'services'}
+                            {item.servicesCount > 0 ? ` \u00b7 avg ${shortInrFromMinor(Math.round(item.salesMinor / item.servicesCount))}` : ''}
+                          </Text>
+                        </View>
+
+                        <Text style={{ color: colors.text, fontSize: 14.5, fontWeight: '800' }}>
+                          {shortInrFromMinor(item.salesMinor)}
+                        </Text>
+                      </View>
+
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 8 }}>
+                        <View style={{ flex: 1, height: 5, borderRadius: 3, backgroundColor: colors.divider, overflow: 'hidden' }}>
+                          <View style={{ width: `${pct}%`, height: 5, borderRadius: 3, backgroundColor: top ? colors.accent : colors.accent + '99' }} />
+                        </View>
+                        <Text style={{ color: colors.accent, fontSize: 11, fontWeight: '700', minWidth: 34, textAlign: 'right' }}>
+                          {item.sharePct}%
+                        </Text>
+                      </View>
                     </View>
-                  </View>
-                ))
+                  );
+                })
               )}
             </ScrollView>
 
@@ -1405,10 +1497,7 @@ export const StaffScreen = ({
               onPress={() => {
                 const s = actionMenuStaff;
                 setActionMenuStaff(null);
-                if (s) {
-                  setPermissionsStaff(s);
-                  setTempPermissions(s.permissions || DEFAULT_STYLIST_PERMISSIONS);
-                }
+                if (s) setPermissionsStaff(s);
               }}
             >
               <LockIcon size={16} color={colors.accent} />
@@ -1530,202 +1619,11 @@ export const StaffScreen = ({
         </TouchableOpacity>
       </Modal>
 
-      {/* Stylist Permissions Modal */}
-      <Modal
-        visible={!!permissionsStaff}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setPermissionsStaff(null)}
-      >
-        <View style={styles.modalOverlay}>
-          <View
-            style={[
-              styles.reportModalBox,
-              { backgroundColor: colors.surface, borderColor: colors.divider, maxHeight: '85%' },
-            ]}
-          >
-            <View style={styles.reportModalHeader}>
-              <View style={{ flex: 1 }}>
-                <Text style={[styles.modalTitle, { color: colors.text }]}>
-                  {t('stylistPermissions', 'Stylist Permissions')}
-                </Text>
-                <Text style={[styles.reportModalSub, { color: colors.textDim }]}>
-                  {permissionsStaff?.name} · {permissionsStaff?.role}
-                </Text>
-              </View>
-              <TouchableOpacity
-                onPress={() => setPermissionsStaff(null)}
-                style={styles.closeBtn}
-              >
-                <Text style={{ color: colors.textDim, fontSize: 18, fontWeight: '700' }}>✕</Text>
-              </TouchableOpacity>
-            </View>
-
-            <Text style={{ color: colors.textMuted, fontSize: 12, marginBottom: 12 }}>
-              Enable or disable the 8 modules for this stylist. When turned off, the module and its queries are completely blocked.
-            </Text>
-
-            <ScrollView style={{ marginVertical: 6 }} showsVerticalScrollIndicator={false}>
-              {[
-                {
-                  key: 'customers' as const,
-                  label: t('moduleCustomers', 'Customers Management'),
-                  sub: 'View customer directory & dues',
-                },
-                {
-                  key: 'sales' as const,
-                  label: t('moduleSales', 'Sales & Billing'),
-                  sub: 'Create bills & manage invoices',
-                },
-                {
-                  key: 'appointments' as const,
-                  label: t('moduleAppointments', 'Appointments & Booking'),
-                  sub: 'View schedule & book client slots',
-                },
-                {
-                  key: 'expenses' as const,
-                  label: t('moduleExpenses', 'Expenses Tracker'),
-                  sub: 'Log & review salon expenses',
-                },
-                {
-                  key: 'reports' as const,
-                  label: t('moduleReports', 'Business & Service Reports'),
-                  sub: 'View P&L and export reports',
-                },
-                {
-                  key: 'team' as const,
-                  label: t('moduleTeam', 'Team & Stylists'),
-                  sub: 'Manage stylists and invitations',
-                },
-                {
-                  key: 'reminders' as const,
-                  label: t('moduleReminders', 'Reminders & WhatsApp'),
-                  sub: 'Send WhatsApp nudges & reminders',
-                },
-                {
-                  key: 'profile' as const,
-                  label: t('moduleProfile', 'Salon Profile & Settings'),
-                  sub: 'Edit shop logo, theme & GST',
-                },
-              ].map((mod) => {
-                const isAllowed = tempPermissions[mod.key] ?? false;
-                return (
-                  <View
-                    key={mod.key}
-                    style={{
-                      flexDirection: 'row',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      paddingVertical: 11,
-                      paddingHorizontal: 12,
-                      borderRadius: radii.md,
-                      backgroundColor: colors.bg,
-                      borderWidth: 1,
-                      borderColor: isAllowed ? 'rgba(217, 164, 65, 0.4)' : colors.divider,
-                      marginBottom: 8,
-                    }}
-                  >
-                    <View style={{ flex: 1, marginRight: 10 }}>
-                      <Text style={{ color: colors.text, fontSize: 14, fontWeight: '600' }}>
-                        {mod.label}
-                      </Text>
-                      <Text style={{ color: colors.textDim, fontSize: 11.5, marginTop: 1 }}>
-                        {mod.sub}
-                      </Text>
-                    </View>
-
-                    <TouchableOpacity
-                      activeOpacity={0.8}
-                      onPress={() => {
-                        setTempPermissions((prev) => ({
-                          ...prev,
-                          [mod.key]: !isAllowed,
-                        }));
-                      }}
-                      style={{
-                        paddingHorizontal: 12,
-                        paddingVertical: 6,
-                        borderRadius: 14,
-                        backgroundColor: isAllowed
-                          ? 'rgba(16, 185, 129, 0.15)'
-                          : 'rgba(239, 68, 68, 0.12)',
-                        borderWidth: 1,
-                        borderColor: isAllowed ? '#10B981' : '#EF4444',
-                      }}
-                    >
-                      <Text
-                        style={{
-                          fontSize: 12,
-                          fontWeight: '700',
-                          color: isAllowed ? '#10B981' : '#EF4444',
-                        }}
-                      >
-                        {isAllowed ? 'ALLOWED' : 'BLOCKED'}
-                      </Text>
-                    </TouchableOpacity>
-                  </View>
-                );
-              })}
-            </ScrollView>
-
-            <View style={{ flexDirection: 'row', gap: 10, marginTop: 10 }}>
-              <TouchableOpacity
-                onPress={() => setPermissionsStaff(null)}
-                style={[
-                  styles.modalBtn,
-                  {
-                    backgroundColor: 'transparent',
-                    borderWidth: 1,
-                    borderColor: colors.divider,
-                    flex: 1,
-                  },
-                ]}
-              >
-                <Text style={{ color: colors.textDim, fontWeight: '600' }}>
-                  {t('cancel', 'Cancel')}
-                </Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                onPress={async () => {
-                  if (!permissionsStaff) return;
-                  setIsSavingPermissions(true);
-                  try {
-                    if (onUpdateStaffPermissions) {
-                      await onUpdateStaffPermissions(permissionsStaff.id, tempPermissions);
-                    } else if (shopId) {
-                      await staffRepository.updateStaffPermissions(
-                        shopId,
-                        permissionsStaff.id,
-                        tempPermissions
-                      );
-                    }
-                    setPermissionsStaff(null);
-                    Alert.alert(
-                      t('permissionsUpdated', 'Stylist permissions updated successfully'),
-                      `Access rights for ${permissionsStaff.name} have been updated in Supabase.`
-                    );
-                  } catch (err: any) {
-                    Alert.alert('Error', err.message || 'Could not update permissions.');
-                  } finally {
-                    setIsSavingPermissions(false);
-                  }
-                }}
-                disabled={isSavingPermissions}
-                style={[styles.modalBtn, { backgroundColor: colors.accent, flex: 2 }]}
-              >
-                {isSavingPermissions ? (
-                  <ActivityIndicator color="#000" size="small" />
-                ) : (
-                  <Text style={{ color: '#000', fontWeight: '700' }}>
-                    {t('savePermissions', 'Save Permissions')}
-                  </Text>
-                )}
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
+      <StylistPermissionsModal
+        staff={permissionsStaff}
+        onClose={() => setPermissionsStaff(null)}
+        onSave={handleSavePermissions}
+      />
     </SafeAreaView>
   );
 };
@@ -1910,12 +1808,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     padding: 14,
     marginBottom: 16,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
   },
   perfReportTitle: {
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: '700',
   },
   perfReportSub: {
@@ -1926,9 +1821,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
+    marginTop: 12,
   },
   perfBtn: {
-    paddingVertical: 8,
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
     paddingHorizontal: 12,
     borderRadius: radii.sm,
   },

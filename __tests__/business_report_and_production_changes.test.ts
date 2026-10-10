@@ -201,11 +201,11 @@ describe('Business Report & Production Changes Specification Verification', () =
       expect(LAUNCH_OFFER_SUBSCRIPTION_PLANS).toHaveLength(3);
 
       const threeMo = getPlanById('3_months', true)!;
-      expect(threeMo.priceInRupees).toBe(1499);
+      expect(threeMo.priceInRupees).toBe(2999);
       expect(threeMo.discountPercent).toBe(0);
 
       const sixMo = getPlanById('6_months', true)!;
-      expect(sixMo.priceInRupees).toBe(2399);
+      expect(sixMo.priceInRupees).toBe(4799);
       expect(sixMo.discountPercent).toBe(20);
 
       const oneYr = getPlanById('12_months', true)!;

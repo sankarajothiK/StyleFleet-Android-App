@@ -2,15 +2,15 @@ import { TextStyle } from 'react-native';
 
 /**
  * Salon OS Typography Tokens
- * Single source of truth: Plus Jakarta Sans bundled typography
+ * Single source of truth: Nunito bundled typography
  */
 
 export const fontFamilies = {
-  regular: 'PlusJakartaSans-Regular',
-  medium: 'PlusJakartaSans-Medium',
-  semiBold: 'PlusJakartaSans-SemiBold',
-  bold: 'PlusJakartaSans-Bold',
-  extraBold: 'PlusJakartaSans-ExtraBold',
+  regular: 'Nunito-Regular',
+  medium: 'Nunito-Medium',
+  semiBold: 'Nunito-SemiBold',
+  bold: 'Nunito-Bold',
+  extraBold: 'Nunito-ExtraBold',
 } as const;
 
 export type AppFontWeight =
@@ -23,7 +23,7 @@ export type AppFontWeight =
   | 'bold';
 
 /**
- * Resolves font family and weight token for Plus Jakarta Sans
+ * Resolves font family and weight token for Nunito
  */
 export const getFont = (weight: AppFontWeight = '400'): { fontFamily: string; fontWeight: TextStyle['fontWeight'] } => {
   switch (weight) {

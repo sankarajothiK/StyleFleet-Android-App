@@ -5,12 +5,12 @@ import { Database } from '../types/database';
 const supabaseUrl =
   process.env.EXPO_PUBLIC_SUPABASE_URL ||
   process.env.NEXT_PUBLIC_SUPABASE_URL ||
-  'https://scgokpcoyfewrtrwqxpu.supabase.co';
+  'https://nqwgxkdpwpgqkezaqsrx.supabase.co';
 
 const supabaseAnonKey =
   process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ||
   process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
-  'sb_publishable_qkXDIACBQgrrge462eSpJg_UCMKQNna';
+  'sb_publishable_fxLPfAbQ8EL8HM5-NS_lqQ_0AMzCWCY';
 
 export const supabase = createClient<any>(supabaseUrl, supabaseAnonKey, {
   auth: {

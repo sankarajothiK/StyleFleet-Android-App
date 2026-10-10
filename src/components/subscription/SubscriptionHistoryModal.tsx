@@ -17,6 +17,7 @@ import { billingRepository } from '../../repositories/billingRepository';
 import { SubscriptionRecord } from '../../types/domain';
 import { getPlanById, formatPriceInRupees } from '../../config/planConfig';
 import { CheckIcon, SparklesIcon, ClockIcon } from '../common/SvgIcons';
+import { FREE_SALES_LIMIT } from '../../utils/subscriptionUtils';
 
 interface SubscriptionHistoryModalProps {
   visible: boolean;
@@ -24,6 +25,8 @@ interface SubscriptionHistoryModalProps {
   shopName: string;
   registrationDateIso?: string | null;
   totalSalesCount?: number;
+  /** Free-plan sales limit for this salon */
+  freeSalesLimit?: number;
   onClose: () => void;
   onUpgradePlan?: () => void;
 }
@@ -34,6 +37,7 @@ export const SubscriptionHistoryModal: React.FC<SubscriptionHistoryModalProps> =
   shopName,
   registrationDateIso,
   totalSalesCount = 0,
+  freeSalesLimit = FREE_SALES_LIMIT,
   onClose,
   onUpgradePlan,
 }) => {
@@ -108,7 +112,7 @@ export const SubscriptionHistoryModal: React.FC<SubscriptionHistoryModalProps> =
 
   // Derive current status details
   const isPaidActive = subInfo?.type === 'subscription' && !subInfo.subscription?.isExpired;
-  const isStarterLimitReached = totalSalesCount >= 100;
+  const isStarterLimitReached = totalSalesCount >= freeSalesLimit;
 
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
@@ -232,7 +236,7 @@ export const SubscriptionHistoryModal: React.FC<SubscriptionHistoryModalProps> =
                       ? `Valid until ${subInfo?.subscription?.endDateFormatted} (${subInfo?.subscription?.remainingDays} days remaining)`
                       : isStarterLimitReached
                       ? '100 free sales limit reached. Upgrade to Pro for unlimited billing & appointments.'
-                      : `${totalSalesCount}/100 free sales used • Free billing & appointments until 100 sales`}
+                      : `${totalSalesCount}/${freeSalesLimit} free sales used • Free billing & appointments until ${freeSalesLimit} sales`}
                   </Text>
                 </View>
 

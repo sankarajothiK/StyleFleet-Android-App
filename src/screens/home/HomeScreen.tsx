@@ -1,52 +1,92 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import {
   View,
   Text,
   TouchableOpacity,
   ScrollView,
   StyleSheet,
-  ImageBackground,
+  ActivityIndicator,
   Image,
   Platform,
-  Dimensions,
+  Animated,
+  useWindowDimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '../../theme/ThemeContext';
 import { useLanguage } from '../../i18n/LanguageContext';
+import { LanguageCode } from '../../i18n/translations';
 import {
   BellIcon,
-  SettingsIcon,
+  SunIcon,
+  MoonIcon,
   CalendarIcon,
   ClockIcon,
   ArrowRightIcon,
   SparklesIcon,
+  CheckIcon,
+  PlusIcon,
+  UsersIcon,
+  ChevronDownIcon,
 } from '../../components/common/SvgIcons';
-import { Bill, Period } from '../../types/domain';
+import { Appointment, Bill, Customer, Period, Service, StaffMember } from '../../types/domain';
 import { financialService } from '../../services/financialService';
-import { inrFromMinor, getInitials } from '../../utils/format';
+import { inr, inrFromMinor, getInitials } from '../../utils/format';
 import { radii, shadows } from '../../theme/spacing';
 import { fontFamilies } from '../../theme/typography';
-import { PlanId } from '../../config/planConfig';
+import { useQuickBook } from '../../hooks/useQuickBook';
+import { QuickBookSuggestion } from '../../services/quickBookService';
+import { getGlass } from '../../theme/glass';
+import { GlassBackdrop } from '../../components/common/GlassBackdrop';
+import { usePullRefresh } from '../../hooks/usePullRefresh';
 
 interface HomeScreenProps {
+  onRefresh?: () => Promise<void>;
+  shopId?: string;
   shopName?: string;
   logoUrl?: string | null;
   remindersCount?: number;
   bills?: Bill[];
   totalSalesCount?: number;
+  customers?: Customer[];
+  appointments?: Appointment[];
+  services?: Service[];
+  staff?: StaffMember[];
+  ownerName?: string;
   shopCreatedAt?: string;
   isPro?: boolean;
   onBookSlot: () => void;
+  /** Owners only. When missing, the warning shows without an Upgrade button. */
+  onUpgradePlan?: () => void;
+  /** Save the suggested booking. Resolves true when saved; must show its own error otherwise. */
+  onQuickConfirm: (suggestion: QuickBookSuggestion) => Promise<boolean>;
+  /** Open the full booking screen for a customer, prefilled from the suggestion when there is one. */
+  onBookForCustomer: (customer: Customer, suggestion: QuickBookSuggestion | null) => void;
   onNavigateAppointments?: () => void;
   onNavigateReminders: () => void;
   onNavigateProfile: () => void;
-  onUpgradePlan: () => void;
-  onSelectPlan?: (planId: PlanId) => void;
   onOpenInvoice: (bill: Bill) => void;
+  /** The logged-in stylist's id (stylist sessions only): "Book again" books for them. */
+  preferredStaffId?: string | null;
 }
 
-const { height } = Dimensions.get('window');
-const heroHeight = Math.round(height * 0.35); // Picture covers exactly 35% of the screen area
+// Text colour on the gold and green buttons (dark on bright, for contrast)
+const ON_ACCENT = '#0D0E11';
+const ON_SUCCESS = '#04200F';
+
+// Quick language switch on Home (all languages stay available in settings)
+const LANG_OPTIONS: { code: LanguageCode; label: string; name: string }[] = [
+  { code: 'en', label: 'EN', name: 'English' },
+  { code: 'hi', label: 'हिं', name: 'Hindi' },
+  { code: 'ta', label: 'தமிழ்', name: 'Tamil' },
+];
+
+// Soft tints for customer initials circles
+const FACE_TINTS = ['#E0C068', '#9FE1CB', '#F5C4B3', '#B5D4F4', '#CECBF6'];
+const faceTint = (name: string): string => {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) % 997;
+  return FACE_TINTS[h % FACE_TINTS.length];
+};
 
 const isValidLogoUri = (uri?: string | null): boolean => {
   if (!uri || typeof uri !== 'string') return false;
@@ -62,25 +102,80 @@ const isValidLogoUri = (uri?: string | null): boolean => {
 };
 
 export const HomeScreen = ({
+  onRefresh,
+  shopId,
   shopName = 'StyleFleet',
   logoUrl = null,
   remindersCount = 0,
   bills = [],
-  totalSalesCount = 0,
+  customers = [],
+  appointments = [],
+  services = [],
+  staff = [],
+  ownerName = 'Owner',
   shopCreatedAt,
-  isPro = false,
   onBookSlot,
+  onQuickConfirm,
+  onBookForCustomer,
   onNavigateAppointments,
   onNavigateReminders,
   onNavigateProfile,
-  onUpgradePlan,
-  onSelectPlan,
   onOpenInvoice,
+  preferredStaffId = null,
 }: HomeScreenProps) => {
-  const { colors } = useTheme();
-  const { t } = useLanguage();
+  const pullRefresh = usePullRefresh(onRefresh);
+  const { colors, setThemeMode } = useTheme();
+  const { width: screenWidth } = useWindowDimensions();
+  const narrow = screenWidth < 350;
+  const themeKnob = useRef(new Animated.Value(colors.isDark ? 1 : 0)).current;
+  useEffect(() => {
+    Animated.timing(themeKnob, { toValue: colors.isDark ? 1 : 0, duration: 180, useNativeDriver: true }).start();
+  }, [colors.isDark, themeKnob]);
+  const { t, language, setLanguage } = useLanguage();
   const [period, setPeriod] = useState<Period>('Day');
   const [logoLoadError, setLogoLoadError] = useState(false);
+  const [billsOpen, setBillsOpen] = useState(false);
+
+  const quick = useQuickBook({
+    shopId,
+    customers,
+    appointments,
+    bills,
+    services,
+    staff,
+    ownerName,
+    preferredStaffId,
+    onConfirm: onQuickConfirm,
+  });
+
+  const glass = getGlass(colors.isDark);
+  const periodLabel =
+    period === 'Day'
+      ? t('today', 'Today')
+      : period === 'Week'
+      ? t('thisWeek', 'This week')
+      : t('thisMonth', 'This month');
+
+  const slotText = (s: QuickBookSuggestion): string => {
+    const day =
+      s.dayOffset === 0
+        ? t('today', 'Today')
+        : s.dayOffset === 1
+        ? t('tomorrow', 'Tomorrow')
+        : s.weekdayLabel;
+    return `${day} ${s.slot.replace(/^0/, '')}`;
+  };
+
+  const handleFacePress = (c: Customer) => {
+    if (quick.isSubmitting) return;
+    if (quick.suggestion?.customer.id === c.id) {
+      quick.clear();
+      return;
+    }
+    const next = quick.select(c);
+    // Nothing reliable to suggest (no past service, service removed, no free slot): open the full screen
+    if (!next) onBookForCustomer(c, null);
+  };
 
 
   useEffect(() => {
@@ -136,189 +231,313 @@ export const HomeScreen = ({
 
   return (
     <View style={[styles.container, { backgroundColor: colors.bg }]}>
+      <GlassBackdrop isDark={colors.isDark} />
       {/* ======================================================== */}
-      {/* 1. HERO PICTURE: COVERS 35% OF SCREEN AREA               */}
+      {/* 1. SIMPLE HEADER: logo, shop name, language, bell, settings */}
       {/* ======================================================== */}
-      <View style={[styles.heroContainer, { height: heroHeight }]}>
-        <ImageBackground
-          source={require('../../assets/home_hero_bg.jpg')}
-          style={styles.heroBgImage}
-          imageStyle={styles.heroBgImageStyle}
-          resizeMode="cover"
-        >
-          <View style={styles.darkOverlay} />
-
-          <SafeAreaView edges={['top']} style={styles.heroSafeArea}>
-          {/* Top Store Info Bar: Logo, Store Name, Greeting, Bell, Settings */}
-          <View style={styles.header}>
-            <View style={styles.storeInfoRow}>
-              <TouchableOpacity
-                activeOpacity={0.85}
-                onPress={onNavigateProfile}
-                style={[styles.logoCircle, { borderColor: colors.accent }]}
-              >
-                {canShowLogo ? (
-                  <Image
-                    source={{ uri: logoUrl!.trim() }}
-                    style={styles.logoImg}
-                    resizeMode="cover"
-                    onError={() => setLogoLoadError(true)}
-                  />
-                ) : (
-                  <View style={[styles.logoPlaceholder, { backgroundColor: colors.accent900 }]}>
-                    <Text style={[styles.logoInitials, { color: colors.accent100 }]}>
-                      {getInitials(shopName || 'StyleFleet')}
-                    </Text>
-                  </View>
-                )}
-              </TouchableOpacity>
-
-              <View style={styles.storeTextCol}>
-                <Text
-                  numberOfLines={1}
-                  adjustsFontSizeToFit
-                  minimumFontScale={0.75}
-                  ellipsizeMode="tail"
-                  style={[
-                    styles.storeTitle,
-                    {
-                      fontSize:
-                        (shopName || 'StyleFleet').length <= 14
-                          ? 19
-                          : (shopName || 'StyleFleet').length <= 22
-                          ? 16
-                          : 14,
-                    },
-                  ]}
-                >
-                  {shopName || 'StyleFleet'}
-                </Text>
-                <Text numberOfLines={1} style={[styles.greetingSub, { color: colors.accent }]}>
-                  {greeting.toUpperCase()}
-                </Text>
-              </View>
+      <SafeAreaView edges={['top']}>
+        <View style={styles.simpleHeader}>
+          <View style={styles.headerTopRow}>
+          <View style={styles.headerLeftGroup}>
+          <TouchableOpacity
+            activeOpacity={0.85}
+            onPress={() => setThemeMode(colors.isDark ? 'light' : 'dark')}
+            accessibilityRole="switch"
+            accessibilityState={{ checked: colors.isDark }}
+            accessibilityLabel={t('theme', 'Theme')}
+            style={[styles.themeSwitch, glass.pill, { borderColor: colors.accent }]}
+          >
+            <Animated.View
+              style={[
+                styles.themeKnob,
+                {
+                  backgroundColor: colors.accent,
+                  transform: [{ translateX: themeKnob.interpolate({ inputRange: [0, 1], outputRange: [0, 28] }) }],
+                },
+              ]}
+            />
+            <View style={styles.themeSlot}>
+              <SunIcon size={15} color={colors.isDark ? colors.textDim : ON_ACCENT} />
             </View>
-
-            <View style={styles.actionButtonsRow}>
-              <TouchableOpacity
-                activeOpacity={0.75}
-                onPress={onNavigateReminders}
-                style={[styles.circleActionBtn, { borderColor: 'rgba(217, 164, 65, 0.4)' }]}
-              >
-                <BellIcon size={18} color={colors.accent} />
-                {remindersCount > 0 && <View style={styles.notifBadge} />}
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                activeOpacity={0.75}
-                onPress={onNavigateProfile}
-                style={[styles.circleActionBtn, { borderColor: 'rgba(217, 164, 65, 0.4)' }]}
-              >
-                <SettingsIcon size={18} color={colors.accent} />
-              </TouchableOpacity>
+            <View style={styles.themeSlot}>
+              <MoonIcon size={15} color={colors.isDark ? ON_ACCENT : colors.textDim} />
             </View>
+          </TouchableOpacity>
           </View>
 
-          {/* Hero Subtitle / Book Slot & Appointments Column */}
-          <View style={styles.heroBottomRow}>
-            <View style={{ flex: 1, marginRight: 10, justifyContent: 'center' }}>
-              <Text style={[styles.taglineSmall, { color: colors.accent }]}>
-                {t('lookGoodFeelGood', 'LOOK GOOD  •  FEEL GOOD')}
-              </Text>
-              <Text style={styles.heroLine2Cursive} numberOfLines={1}>
-                {t('youDeserve', 'You Deserve the Best')}
-              </Text>
-            </View>
-
-            <View style={styles.heroButtonsCol}>
-              <TouchableOpacity
-                activeOpacity={0.88}
-                onPress={onBookSlot}
-                style={[styles.bookSlotButton, { backgroundColor: colors.accent }]}
-              >
-                <CalendarIcon size={13} color="#120E06" strokeWidth={2.2} />
-                <Text style={styles.bookSlotText}>{t('bookSlot', 'Book Slot')}</Text>
-                <ArrowRightIcon size={10} color="#120E06" strokeWidth={3} />
-              </TouchableOpacity>
-
-              {onNavigateAppointments && (
+          <View style={[styles.headerRightGroup, narrow && { gap: 6 }]}>
+          <View style={[styles.langPill, glass.pill, { borderColor: colors.accent }]}>
+            {LANG_OPTIONS.map((opt) => {
+              const active = language === opt.code;
+              return (
                 <TouchableOpacity
-                  activeOpacity={0.85}
-                  onPress={onNavigateAppointments}
-                  style={[
-                    styles.myAppointmentsButton,
-                    {
-                      backgroundColor: 'rgba(18, 14, 6, 0.75)',
-                      borderColor: colors.accent,
-                    },
-                  ]}
-                  accessibilityLabel={t('myAppointments', 'My Appointments')}
+                  key={opt.code}
+                  activeOpacity={0.8}
+                  onPress={() => setLanguage(opt.code)}
+                  accessibilityLabel={opt.name}
+                  accessibilityState={{ selected: active }}
+                  style={active ? { backgroundColor: colors.accent } : undefined}
                 >
-                  <ClockIcon size={12} color={colors.accent} strokeWidth={2} />
-                  <Text style={[styles.myAppointmentsText, { color: colors.accent }]}>
-                    {t('myAppointments', 'My Appointments')}
+                  <Text
+                    style={[
+                      styles.langSeg,
+                      narrow && { paddingHorizontal: 6, fontSize: 12 },
+                      { color: active ? ON_ACCENT : colors.accent },
+                    ]}
+                  >
+                    {opt.label}
                   </Text>
-                  <ArrowRightIcon size={9} color={colors.accent} strokeWidth={2.5} />
                 </TouchableOpacity>
+              );
+            })}
+          </View>
+
+          <View style={styles.actionButtonsRow}>
+            <TouchableOpacity
+              activeOpacity={0.75}
+              onPress={onNavigateReminders}
+              accessibilityLabel={t('reminders', 'Reminders')}
+              style={[styles.circleActionBtn, glass.pill, { borderColor: colors.accent }]}
+            >
+              <BellIcon size={18} color={colors.accent} />
+              {remindersCount > 0 && <View style={styles.notifBadge} />}
+            </TouchableOpacity>
+          </View>
+          </View>
+          </View>
+          <View style={[styles.storeInfoRow, { flex: 0, paddingRight: 0 }]}>
+            <TouchableOpacity
+              activeOpacity={0.85}
+              onPress={onNavigateProfile}
+              style={[styles.logoCircle, { borderColor: colors.accent }]}
+            >
+              {canShowLogo ? (
+                <Image
+                  source={{ uri: logoUrl!.trim() }}
+                  style={styles.logoImg}
+                  resizeMode="cover"
+                  onError={() => setLogoLoadError(true)}
+                />
+              ) : (
+                <View style={[styles.logoPlaceholder, { backgroundColor: colors.accent900 }]}>
+                  <Text style={[styles.logoInitials, { color: colors.accent100 }]}>
+                    {getInitials(shopName || 'StyleFleet')}
+                  </Text>
+                </View>
               )}
+            </TouchableOpacity>
+
+            <View style={styles.storeTextCol}>
+              <Text
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.75}
+                ellipsizeMode="tail"
+                style={[
+                  styles.storeTitle,
+                  {
+                    color: colors.text,
+                    fontSize:
+                      (shopName || 'StyleFleet').length <= 14
+                        ? 19
+                        : (shopName || 'StyleFleet').length <= 22
+                        ? 16
+                        : 14,
+                  },
+                ]}
+              >
+                {shopName || 'StyleFleet'}
+              </Text>
+              <Text numberOfLines={1} style={[styles.greetingSub, { color: colors.accent }]}>
+                {greeting.toUpperCase()}
+              </Text>
             </View>
           </View>
-          </SafeAreaView>
-        </ImageBackground>
-      </View>
+
+        </View>
+      </SafeAreaView>
 
       {/* ======================================================== */}
       {/* SCROLLABLE CONTENT BELOW THE 35% PICTURE                 */}
       {/* ======================================================== */}
       <ScrollView
-        style={[styles.scrollArea, { backgroundColor: colors.bg }]}
+        refreshControl={pullRefresh}
+        style={styles.scrollArea}
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        {/* 2. SALES PROGRESS BAR CONTAINER */}
-        <View
-          style={[
-            styles.progressCard,
-            { backgroundColor: colors.surface, borderColor: colors.divider },
-          ]}
+        {/* QUICK BOOKING: big button, then "Book again" faces */}
+        <TouchableOpacity
+          activeOpacity={0.88}
+          onPress={onBookSlot}
+          accessibilityRole="button"
+          accessibilityLabel={t('newBooking', 'New booking')}
+          style={[styles.newBookingBtn, { backgroundColor: colors.accent }]}
         >
-          <View style={styles.progressHeaderRow}>
-            <Text style={[styles.salesCountText, { color: colors.text }]}>
-              {totalSalesCount}/100 sales
-            </Text>
+          <CalendarIcon size={19} color={ON_ACCENT} strokeWidth={2.2} />
+          <Text style={styles.newBookingText}>{t('newBooking', 'New booking')}</Text>
+        </TouchableOpacity>
 
+        {onNavigateAppointments && (
+          <TouchableOpacity
+            activeOpacity={0.8}
+            onPress={onNavigateAppointments}
+            accessibilityLabel={t('myAppointments', 'My Appointments')}
+            style={styles.myApptLink}
+          >
+            <ClockIcon size={16} color={colors.accent} strokeWidth={2} />
+            <Text style={[styles.myApptText, { color: colors.accent }]}>
+              {t('myAppointments', 'My Appointments')}
+            </Text>
+            <ArrowRightIcon size={12} color={colors.accent} strokeWidth={2.5} />
+          </TouchableOpacity>
+        )}
+
+        <Text style={[styles.sectionTitle, { color: colors.text }]}>
+          {t('bookAgain', 'Book again')}
+        </Text>
+        {quick.recentCustomers.length === 0 ? (
+          <Text style={[styles.emptyFaces, { color: colors.textDim }]}>
+            {t('noBookAgainYet', 'Past customers will show here')}
+          </Text>
+        ) : (
+          <View style={styles.facesRow}>
+            {quick.recentCustomers.map((c) => {
+              const isSelected = quick.suggestion?.customer.id === c.id;
+              return (
+                <TouchableOpacity
+                  key={c.id}
+                  activeOpacity={0.8}
+                  onPress={() => handleFacePress(c)}
+                  accessibilityLabel={c.name}
+                  style={styles.face}
+                >
+                  <View
+                    style={[
+                      styles.faceAvatar,
+                      {
+                        backgroundColor: faceTint(c.name),
+                        borderColor: isSelected ? colors.success : 'transparent',
+                      },
+                    ]}
+                  >
+                    <Text style={styles.faceInitials}>{getInitials(c.name)}</Text>
+                  </View>
+                  <Text numberOfLines={2} style={[styles.faceName, { color: colors.text }]}>
+                    {c.name.trim()}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
             <TouchableOpacity
-              style={[styles.upgradeBtn, { backgroundColor: colors.accent }]}
-              activeOpacity={0.85}
-              onPress={onUpgradePlan}
+              activeOpacity={0.8}
+              onPress={onBookSlot}
+              accessibilityLabel={t('moreCustomers', 'More')}
+              style={styles.face}
             >
-              <Text style={styles.upgradeBtnText}>Upgrade</Text>
+              <View
+                style={[
+                  styles.faceAvatar,
+                  glass.raised,
+                ]}
+              >
+                <PlusIcon size={18} color={colors.textMuted} />
+              </View>
+              <Text numberOfLines={1} style={[styles.faceName, { color: colors.text }]}>
+                {t('moreCustomers', 'More')}
+              </Text>
             </TouchableOpacity>
           </View>
+        )}
 
-          <View style={[styles.progressTrack, { backgroundColor: colors.trackBg }]}>
-            <View
+        {quick.suggestion && (
+          <View
+            style={[
+              styles.suggestCard,
+              glass.raised,
+            ]}
+          >
+            <Text style={[styles.suggestHint, { color: colors.textMuted }]}>
+              {t('sameAsLast', 'Same as last time?')}
+            </Text>
+            <View style={styles.suggestRow}>
+              <UsersIcon size={22} color={colors.accent} />
+              <Text numberOfLines={2} style={[styles.suggestMain, { color: colors.text }]}>
+                {quick.suggestion.customer.name}
+              </Text>
+            </View>
+            <View style={styles.suggestRow}>
+              <SparklesIcon size={22} color={colors.accent} />
+              <Text numberOfLines={1} style={[styles.suggestMain, { color: colors.text }]}>
+                {quick.suggestion.services.map((s) => s.name).join(' + ')}
+              </Text>
+              <Text style={[styles.suggestSide, { color: colors.textMuted }]}>
+                {inr(quick.suggestion.amountRupees)}
+              </Text>
+            </View>
+            <View style={styles.suggestRow}>
+              <ClockIcon size={22} color={colors.accent} />
+              <Text numberOfLines={1} style={[styles.suggestMain, { color: colors.text }]}>
+                {slotText(quick.suggestion)}
+              </Text>
+              <Text style={[styles.suggestSide, { color: colors.textMuted }]}>
+                {quick.suggestion.stylist.name}
+              </Text>
+            </View>
+
+            <TouchableOpacity
+              activeOpacity={0.88}
+              disabled={quick.isSubmitting}
+              onPress={quick.confirm}
+              accessibilityRole="button"
               style={[
-                styles.progressFill,
-                {
-                  width: `${Math.min(Math.round((totalSalesCount / 100) * 100), 100)}%`,
-                  backgroundColor: colors.accent,
-                },
+                styles.confirmBtn,
+                { backgroundColor: colors.success, opacity: quick.isSubmitting ? 0.7 : 1 },
               ]}
-            />
+            >
+              {quick.isSubmitting ? (
+                <ActivityIndicator color={ON_SUCCESS} />
+              ) : (
+                <CheckIcon size={26} color={ON_SUCCESS} />
+              )}
+              <Text style={styles.confirmText}>
+                {quick.isSubmitting ? t('booking', 'Booking…') : t('yesBook', 'Yes, book')}
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              activeOpacity={0.8}
+              disabled={quick.isSubmitting}
+              onPress={() => onBookForCustomer(quick.suggestion!.customer, quick.suggestion)}
+              style={styles.changeLink}
+            >
+              <Text style={[styles.changeText, { color: colors.textMuted }]}>
+                {t('changeBooking', 'Change')}
+              </Text>
+            </TouchableOpacity>
           </View>
-        </View>
+        )}
 
-
-        {/* 3. SALES HISTOGRAM (VISIBLE BELOW PROGRESS BAR CONTAINER) */}
+        {/* 3. SALES: one big number, switch Day / Week / Month */}
         <View
           style={[
-            styles.histogramCard,
-            { backgroundColor: colors.surface, borderColor: colors.divider },
+            styles.salesCard,
+            glass.raised,
           ]}
         >
-          {/* Period Selector Tabs */}
-          <View style={[styles.periodTabsRow, { borderColor: colors.divider }]}>
+          <Text style={[styles.salesLabel, { color: colors.textMuted }]}>{periodLabel}</Text>
+          <Text
+            numberOfLines={1}
+            adjustsFontSizeToFit
+            style={[styles.salesAmount, { color: colors.text }]}
+          >
+            {inrFromMinor(metrics.total_minor)}
+          </Text>
+          <Text style={[styles.salesDelta, { color: isUp ? colors.accent : colors.neutral400 }]}>
+            {deltaLabel}
+          </Text>
+
+          <View style={[styles.periodRow, glass.inset, { borderWidth: 1, borderRadius: 16, padding: 3 }]}>
             {(['Day', 'Week', 'Month'] as const).map((p) => {
               const isSelected = period === p;
               return (
@@ -326,80 +545,28 @@ export const HomeScreen = ({
                   key={p}
                   activeOpacity={0.8}
                   onPress={() => setPeriod(p)}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: isSelected }}
                   style={[
-                    styles.periodTab,
+                    styles.periodBtn,
                     {
-                      backgroundColor: isSelected ? colors.accent900 : 'transparent',
-                      borderWidth: isSelected ? 1 : 0,
+                      backgroundColor: isSelected ? colors.accent : 'transparent',
                       borderColor: isSelected ? colors.accent : 'transparent',
+                      ...(isSelected
+                        ? { shadowColor: colors.accent, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.45, shadowRadius: 8, elevation: 4 }
+                        : null),
                     },
                   ]}
                 >
                   <Text
                     style={[
-                      styles.periodTabText,
-                      {
-                        color: isSelected ? colors.accent : colors.textMuted,
-                      },
+                      styles.periodBtnText,
+                      { color: isSelected ? ON_ACCENT : colors.text },
                     ]}
                   >
-                    {t(p.toLowerCase(), p)}
+                    {p === 'Day' ? t('today', 'Today') : t(p.toLowerCase(), p)}
                   </Text>
                 </TouchableOpacity>
-              );
-            })}
-          </View>
-
-          {/* Total Sales & Delta */}
-          <View style={styles.totalRow}>
-            <Text style={[styles.totalAmount, { color: colors.text }]}>
-              {inrFromMinor(metrics.total_minor)}
-            </Text>
-            <Text
-              style={[
-                styles.deltaText,
-                { color: isUp ? colors.accent : colors.neutral400 },
-              ]}
-            >
-              {deltaLabel}
-            </Text>
-          </View>
-          <Text style={[styles.subLabel, { color: colors.textDim }]}>
-            {metrics.sub_label}
-          </Text>
-
-          {/* Histogram Bars */}
-          <View style={styles.chartContainer}>
-            {metrics.bars.map((bar, i) => {
-              const isTodayOrNow = bar.label === 'Today' || bar.label.includes('Now');
-              const hasSales = bar.amt_minor > 0;
-              return (
-                <View key={i} style={styles.barColumn}>
-                  <View
-                    style={[
-                      styles.bar,
-                      {
-                        height: Math.round((bar.height_pct / 100) * 64) + 4,
-                        backgroundColor: hasSales
-                          ? colors.accent
-                          : isTodayOrNow
-                          ? colors.accent800
-                          : colors.trackBg,
-                      },
-                    ]}
-                  />
-                  <Text
-                    style={[
-                      styles.barLabel,
-                      {
-                        color: isTodayOrNow ? colors.accent : colors.textDim,
-                        fontWeight: isTodayOrNow ? '700' : '400',
-                      },
-                    ]}
-                  >
-                    {bar.label}
-                  </Text>
-                </View>
               );
             })}
           </View>
@@ -407,20 +574,29 @@ export const HomeScreen = ({
 
         {/* 4. RECENT BILLS */}
         <View style={styles.billsSection}>
-          <View style={styles.billsListHeader}>
+          <TouchableOpacity
+            activeOpacity={0.8}
+            onPress={() => setBillsOpen((open) => !open)}
+            accessibilityRole="button"
+            accessibilityState={{ expanded: billsOpen }}
+            style={[
+              styles.billsListHeader,
+              glass.raised,
+            ]}
+          >
             <Text style={[styles.billsListTitle, { color: colors.text }]}>
               {t('recentBills', 'Recent Bills')} ({recentBills.length})
             </Text>
-            <Text style={[styles.billsListSub, { color: colors.textSubtle }]}>
-              {t('tapToView', 'tap to view')}
-            </Text>
-          </View>
+            <View style={billsOpen ? styles.arrowUp : undefined}>
+              <ChevronDownIcon size={26} color={colors.accent} />
+            </View>
+          </TouchableOpacity>
 
-          {recentBills.length === 0 ? (
+          {billsOpen && (recentBills.length === 0 ? (
             <View
               style={[
                 styles.emptyBillsBox,
-                { backgroundColor: colors.surface, borderColor: colors.divider },
+                glass.raised,
               ]}
             >
               <Text style={[styles.emptyBillsTitle, { color: colors.text }]}>
@@ -434,7 +610,7 @@ export const HomeScreen = ({
             <View
               style={[
                 styles.billsCard,
-                { backgroundColor: colors.surface, borderColor: colors.divider },
+                glass.raised,
               ]}
             >
               {recentBills.map((b, idx) => {
@@ -524,7 +700,7 @@ export const HomeScreen = ({
                 );
               })}
             </View>
-          )}
+          ))}
         </View>
       </ScrollView>
     </View>
@@ -537,38 +713,6 @@ const styles = StyleSheet.create({
   },
 
 
-  heroContainer: {
-    width: '100%',
-    overflow: 'hidden',
-  },
-  heroBgImage: {
-    width: '100%',
-    height: '100%',
-  },
-  heroBgImageStyle: {
-    resizeMode: 'cover',
-    opacity: 0.88,
-  },
-  darkOverlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: 'rgba(8, 9, 13, 0.45)',
-  },
-  heroSafeArea: {
-    flex: 1,
-    paddingHorizontal: 16,
-    justifyContent: 'space-between',
-    paddingBottom: 10,
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingTop: 2,
-  },
   storeInfoRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -617,6 +761,11 @@ const styles = StyleSheet.create({
     letterSpacing: 1.4,
     marginTop: 2,
   },
+  headerLeftGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
   actionButtonsRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -646,60 +795,190 @@ const styles = StyleSheet.create({
   },
 
 
-  heroBottomRow: {
+  simpleHeader: {
+    paddingHorizontal: 16,
+    paddingTop: 6,
+    paddingBottom: 14,
+    gap: 14,
+  },
+  headerTopRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    gap: 10,
+  },
+  themeSwitch: {
+    width: 62,
+    height: 34,
+    borderRadius: 17,
+    borderWidth: 1.2,
+    padding: 3,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  themeKnob: {
+    position: 'absolute',
+    top: 3,
+    left: 3,
+    width: 28,
+    height: 26,
+    borderRadius: 13,
+  },
+  themeSlot: {
+    width: 28,
+    height: 26,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  headerRightGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  langPill: {
+    flexDirection: 'row',
+    borderWidth: 1.2,
+    borderRadius: 16,
+    overflow: 'hidden',
+  },
+  langSeg: {
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    fontSize: 13,
+    fontWeight: '700',
+    fontFamily: fontFamilies.bold,
+  },
+  newBookingBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    minHeight: 46,
+    borderRadius: 14,
+    shadowColor: '#D4AF37',
+    shadowOffset: { width: 0, height: 5 },
+    shadowOpacity: 0.35,
+    shadowRadius: 10,
+    elevation: 4,
+  },
+  newBookingText: {
+    color: ON_ACCENT,
+    fontSize: 15.5,
+    fontWeight: '700',
+    fontFamily: fontFamilies.bold,
+  },
+  myApptLink: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 12,
+  },
+  myApptText: {
+    fontSize: 14,
+    fontWeight: '600',
+    fontFamily: fontFamilies.semiBold,
+  },
+  sectionTitle: {
+    fontSize: 17,
+    fontWeight: '700',
+    fontFamily: fontFamilies.bold,
+    marginTop: 4,
+    marginBottom: 10,
+  },
+  emptyFaces: {
+    fontSize: 14,
+    marginBottom: 14,
+  },
+  facesRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'flex-start',
+    gap: 8,
+    marginBottom: 10,
+  },
+  face: {
+    width: 72,
+    alignItems: 'center',
+  },
+  faceAvatar: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    borderWidth: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 4,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.35,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  faceInitials: {
+    color: ON_ACCENT,
+    fontSize: 14,
+    fontWeight: '700',
+    fontFamily: fontFamilies.bold,
+  },
+  faceName: {
+    fontSize: 12,
+    lineHeight: 15,
+    textAlign: 'center',
+    fontWeight: '500',
+    fontFamily: fontFamilies.medium,
+  },
+  suggestCard: {
+    borderRadius: 18,
+    borderWidth: 1,
+    padding: 16,
+    marginBottom: 16,
+  },
+  suggestHint: {
+    fontSize: 14,
+    marginBottom: 12,
+  },
+  suggestRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginBottom: 10,
+  },
+  suggestMain: {
+    flex: 1,
+    fontSize: 17,
+    fontWeight: '600',
+    fontFamily: fontFamilies.semiBold,
+  },
+  suggestSide: {
+    fontSize: 14,
+    fontWeight: '500',
+    fontFamily: fontFamilies.medium,
+  },
+  confirmBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    minHeight: 58,
+    borderRadius: 16,
+    marginTop: 8,
+  },
+  confirmText: {
+    color: ON_SUCCESS,
+    fontSize: 19,
+    fontWeight: '700',
+    fontFamily: fontFamilies.bold,
+  },
+  changeLink: {
+    alignItems: 'center',
+    paddingTop: 14,
     paddingBottom: 2,
   },
-  taglineSmall: {
-    fontSize: 9.5,
-    fontWeight: '700',
-    letterSpacing: 1.6,
-  },
-  heroLine2Cursive: {
-    color: '#FFFFFF',
+  changeText: {
     fontSize: 15,
-    fontStyle: 'italic',
-    fontFamily: fontFamilies.semiBold,
-    marginTop: 2,
-  },
-  heroButtonsCol: {
-    alignItems: 'stretch',
-    gap: 6,
-    minWidth: 126,
-  },
-  bookSlotButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 7,
-    paddingHorizontal: 12,
-    borderRadius: radii.sm,
-    gap: 6,
-    ...shadows.sm,
-  },
-  bookSlotText: {
-    color: '#120E06',
-    fontSize: 12,
-    fontWeight: '700',
-    letterSpacing: 0.3,
-  },
-  myAppointmentsButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 5,
-    paddingHorizontal: 10,
-    borderRadius: radii.sm,
-    borderWidth: 1,
-    gap: 5,
-    ...shadows.sm,
-  },
-  myAppointmentsText: {
-    fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 0.2,
+    fontWeight: '500',
+    fontFamily: fontFamilies.medium,
   },
   scrollArea: {
     flex: 1,
@@ -708,121 +987,69 @@ const styles = StyleSheet.create({
     padding: 16,
     paddingBottom: 36,
   },
-  progressCard: {
-    borderRadius: radii.md,
-    borderWidth: 1,
-    padding: 14,
-    marginBottom: 14,
-  },
-  progressHeaderRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 10,
-  },
-  salesCountText: {
-    fontSize: 15,
-    fontWeight: '700',
-    letterSpacing: 0.3,
-  },
-  upgradeBtn: {
-    paddingVertical: 6,
-    paddingHorizontal: 14,
-    borderRadius: radii.sm,
-  },
-  upgradeBtnText: {
-    color: '#0D0F14',
-    fontSize: 12,
-    fontWeight: '700',
-    letterSpacing: 0.4,
-  },
-  progressTrack: {
-    height: 8,
-    borderRadius: 4,
-    overflow: 'hidden',
-  },
-  progressFill: {
-    height: '100%',
-    borderRadius: 4,
-  },
-  histogramCard: {
-    borderRadius: radii.md,
-    borderWidth: 1,
-    padding: 14,
-    marginBottom: 16,
-  },
-  periodTabsRow: {
-    flexDirection: 'row',
-    borderRadius: radii.sm,
-    overflow: 'hidden',
-    marginBottom: 12,
-  },
-  periodTab: {
-    flex: 1,
-    paddingVertical: 7,
-    alignItems: 'center',
-    borderRadius: radii.sm,
-  },
-  periodTabText: {
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  totalRow: {
-    flexDirection: 'row',
-    alignItems: 'baseline',
-    gap: 10,
-  },
-  totalAmount: {
-    fontSize: 24,
-    fontWeight: '700',
-    letterSpacing: -0.5,
-  },
-  deltaText: {
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  subLabel: {
-    fontSize: 11,
-    marginTop: 2,
-    marginBottom: 10,
-  },
-  chartContainer: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    height: 86,
-    gap: 8,
-    paddingTop: 8,
-  },
-  barColumn: {
-    flex: 1,
-    alignItems: 'center',
-    height: '100%',
-    justifyContent: 'flex-end',
-  },
-  bar: {
-    width: '100%',
-    borderRadius: 4,
-  },
-  barLabel: {
-    fontSize: 10,
-    marginTop: 4,
-  },
   billsSection: {
     marginTop: 2,
   },
+  salesCard: {
+    borderRadius: 18,
+    borderWidth: 1,
+    padding: 14,
+    marginBottom: 16,
+    alignItems: 'center',
+  },
+  salesLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    fontFamily: fontFamilies.semiBold,
+  },
+  salesAmount: {
+    fontSize: 30,
+    fontWeight: '800',
+    fontFamily: fontFamilies.extraBold,
+    marginTop: 2,
+    maxWidth: '100%',
+  },
+  salesDelta: {
+    fontSize: 12,
+    fontWeight: '600',
+    fontFamily: fontFamilies.semiBold,
+    marginTop: 2,
+    marginBottom: 10,
+  },
+  periodRow: {
+    flexDirection: 'row',
+    gap: 8,
+    alignSelf: 'stretch',
+  },
+  periodBtn: {
+    flex: 1,
+    minHeight: 42,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  periodBtnText: {
+    fontSize: 15,
+    fontWeight: '700',
+    fontFamily: fontFamilies.bold,
+  },
   billsListHeader: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 8,
-    paddingHorizontal: 2,
+    justifyContent: 'space-between',
+    borderRadius: 16,
+    borderWidth: 1,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    marginBottom: 10,
+  },
+  arrowUp: {
+    transform: [{ rotate: '180deg' }],
   },
   billsListTitle: {
     fontSize: 14,
     fontWeight: '700',
-  },
-  billsListSub: {
-    fontSize: 11,
   },
   billsCard: {
     borderRadius: radii.md,

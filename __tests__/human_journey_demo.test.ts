@@ -3,6 +3,7 @@ import { authRepository, AuthUser } from '../src/repositories/authRepository';
 import { shopRepository, ShopRow, ShopRegistrationData } from '../src/repositories/shopRepository';
 import { customerRepository } from '../src/repositories/customerRepository';
 import { staffRepository } from '../src/repositories/staffRepository';
+import { supabase } from '../src/lib/supabase';
 import { serviceRepository } from '../src/repositories/serviceRepository';
 import { appointmentRepository } from '../src/repositories/appointmentRepository';
 import { billingRepository } from '../src/repositories/billingRepository';
@@ -124,6 +125,24 @@ describe('Human-like End-to-End Salon Journey Simulation (Demo Account)', () => 
 
   // STEP 4: Team & Stylist Management (10-Digit Phone, Max 3, Default Owner)
   describe('Step 4: Stylist Operations (Validation, Limit Enforcement & Owner Attribution)', () => {
+    // Staff inserts now surface database errors, so give this step a staff table that accepts inserts.
+    const realFrom = supabase.from.bind(supabase);
+    let fromSpy: jest.SpyInstance;
+    beforeAll(() => {
+      let seq = 0;
+      fromSpy = jest.spyOn(supabase, 'from').mockImplementation(((table: string) => {
+        if (table !== 'staff') return realFrom(table);
+        return {
+          insert: (row: Record<string, unknown>) => ({
+            select: () => ({
+              single: () => Promise.resolve({ data: { id: `staff_${++seq}`, ...row }, error: null }),
+            }),
+          }),
+        };
+      }) as typeof supabase.from);
+    });
+    afterAll(() => fromSpy.mockRestore());
+
     it('rejects adding a stylist without valid 10-digit mobile number', async () => {
       await expect(
         staffRepository.addStaff(demoShopId, 'Rahul', 'Senior Stylist', '98765')

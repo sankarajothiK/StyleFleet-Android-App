@@ -54,7 +54,8 @@ export class PdfStorageService {
         });
 
       if (uploadError) {
-        console.warn('Notice: Supabase storage upload warning:', uploadError.message);
+        // Never hand out a link to a file that was not stored (customers would get a 404)
+        throw new Error(uploadError.message);
       }
 
       // 2. Short, branded customer-facing direct PDF URL (single line, ~50 chars)
@@ -75,7 +76,7 @@ export class PdfStorageService {
       return brandedUrl;
     } catch (err: any) {
       console.warn('PDF storage service error:', err);
-      return `https://stylefleet.tecstellar.com/b/${fileName}`;
+      throw err;
     }
   }
 }

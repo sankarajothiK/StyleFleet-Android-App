@@ -27,6 +27,13 @@ import { inrFromMinor, getInitials } from '../../utils/format';
 import { radii } from '../../theme/spacing';
 import { generateInvoiceHtml } from '../../utils/invoicePdf';
 import { pdfStorageService } from '../../services/pdfStorageService';
+import {
+  InstalledWhatsAppApp,
+  getInstalledWhatsAppApps,
+  openWhatsAppChat,
+  whatsAppChoiceFor,
+} from '../../services/whatsappLauncher';
+import { WhatsAppAppPickerModal } from '../../components/common/WhatsAppAppPickerModal';
 import { buildWhatsAppBillMessage } from '../../utils/whatsappFormatter';
 import { shopRepository } from '../../repositories/shopRepository';
 
@@ -43,6 +50,8 @@ interface InvoiceScreenProps {
   shopUpiId?: string | null;
   userRole?: string;
   isStylist?: boolean;
+  /** Owner switch: may this user send the bill (WhatsApp / PDF)? Defaults to the old rule: owners yes, stylists no. */
+  canShareBills?: boolean;
   onSaveUpiId?: (upiId: string) => Promise<void>;
   onBack: () => void;
   onSendWhatsApp?: (bill: Bill) => void;
@@ -64,6 +73,7 @@ export const InvoiceScreen = ({
   shopUpiId,
   userRole,
   isStylist,
+  canShareBills,
   onSaveUpiId,
   onBack,
   onSendWhatsApp,
@@ -73,9 +83,15 @@ export const InvoiceScreen = ({
 }: InvoiceScreenProps) => {
   const { colors } = useTheme();
   const { t } = useLanguage();
+  const allowShare = canShareBills ?? !(isStylist || userRole === 'stylist');
   const [isExportingPdf, setIsExportingPdf] = useState(false);
   const [isPrinting, setIsPrinting] = useState(false);
   const [isSendingWhatsApp, setIsSendingWhatsApp] = useState(false);
+  const [pendingWhatsApp, setPendingWhatsApp] = useState<{
+    phone: string;
+    message: string;
+    apps: InstalledWhatsAppApp[];
+  } | null>(null);
   const [logoError, setLogoError] = useState(false);
 
   // Phone state and modal
@@ -197,6 +213,7 @@ export const InvoiceScreen = ({
 
   // Share PDF
   const handleSharePdf = async () => {
+    if (!allowShare) return;
     try {
       setIsExportingPdf(true);
       const { uri, base64 } = await generatePdfFile();
@@ -285,17 +302,23 @@ export const InvoiceScreen = ({
         const fileName = `${cleanNumber}_${shortId}.pdf`;
         pdfUrl = `https://stylefleet.tecstellar.com/b/${fileName}`;
 
-        // Trigger PDF generation & Supabase upload asynchronously without freezing UI or delaying WhatsApp
-        generatePdfFile()
-          .then(({ uri, base64 }) => {
-            pdfStorageService.uploadInvoicePdf(
-              shopId || bill.shop_id,
-              bill,
-              uri,
-              base64
-            ).catch((e) => console.warn('Background PDF storage notice:', e));
-          })
-          .catch((pdfErr) => console.warn('Notice: PDF generation notice:', pdfErr));
+        // The file must exist in storage before the link is sent, otherwise the customer gets a 404
+        try {
+          const { uri, base64 } = await generatePdfFile();
+          pdfUrl = await pdfStorageService.uploadInvoicePdf(
+            shopId || bill.shop_id,
+            bill,
+            uri,
+            base64
+          );
+        } catch (pdfErr: any) {
+          console.warn('PDF upload failed before WhatsApp send:', pdfErr);
+          Alert.alert(
+            'Could not prepare PDF',
+            'The invoice PDF could not be uploaded, so the link would not open for your customer. Check your internet connection and try again.'
+          );
+          return;
+        }
       }
 
       const effectiveUpi = overrideUpiId !== undefined ? overrideUpiId : currentUpiId;
@@ -312,26 +335,33 @@ export const InvoiceScreen = ({
         upiId: effectiveUpi,
       });
 
-      const nativeUrl = `whatsapp://send?phone=91${cleanPhone}&text=${encodeURIComponent(message)}`;
-      const webUrl = `https://api.whatsapp.com/send?phone=91${cleanPhone}&text=${encodeURIComponent(message)}`;
-
-      try {
-        const supported = await Linking.canOpenURL(nativeUrl);
-        if (supported) {
-          await Linking.openURL(nativeUrl);
-        } else {
-          await Linking.openURL(webUrl);
-        }
-      } catch {
-        await Linking.openURL(webUrl);
+      // 3. Two WhatsApp apps installed (WhatsApp + WhatsApp Business): let the user choose
+      const installed = await getInstalledWhatsAppApps();
+      if (whatsAppChoiceFor(installed.length) === 'ask') {
+        setPendingWhatsApp({ phone: cleanPhone, message, apps: installed });
+        return;
       }
 
+      await openWhatsAppChat(cleanPhone, message, installed[0]);
       onSendWhatsApp?.(bill);
     } catch (err: any) {
       console.warn('Error launching WhatsApp:', err);
       Alert.alert('WhatsApp Error', err.message || 'Could not open WhatsApp.');
     } finally {
       setIsSendingWhatsApp(false);
+    }
+  };
+
+  const handlePickWhatsApp = async (app: InstalledWhatsAppApp) => {
+    const pending = pendingWhatsApp;
+    setPendingWhatsApp(null);
+    if (!pending) return;
+    try {
+      await openWhatsAppChat(pending.phone, pending.message, app);
+      onSendWhatsApp?.(bill);
+    } catch (err: any) {
+      console.warn('Error launching WhatsApp:', err);
+      Alert.alert('WhatsApp Error', err.message || 'Could not open WhatsApp.');
     }
   };
 
@@ -372,10 +402,10 @@ export const InvoiceScreen = ({
 
   // WhatsApp Trigger: Checks if partially paid requires UPI setup
   const handleWhatsApp = () => {
-    if (isStylist || userRole === 'stylist') {
+    if (!allowShare) {
       Alert.alert(
-        'Stylist Restricted',
-        'Stylists are not permitted to send customer bills through WhatsApp. Only the salon owner can send bills via WhatsApp.'
+        'Not Allowed',
+        'The salon owner has not given you permission to share bills. Please ask the owner to turn on Share bills for you.'
       );
       return;
     }
@@ -406,8 +436,12 @@ export const InvoiceScreen = ({
           style: 'destructive',
           onPress: async () => {
             if (onDeleteBill) {
-              await onDeleteBill(bill.id);
-              onBack();
+              try {
+                await onDeleteBill(bill.id);
+                onBack();
+              } catch (e: any) {
+                Alert.alert('Bill not deleted', e?.message || 'Could not delete the bill. Please try again.');
+              }
             }
           },
         },
@@ -417,9 +451,13 @@ export const InvoiceScreen = ({
 
   const handleRestore = async () => {
     if (onRestoreBill) {
-      await onRestoreBill(bill.id);
-      Alert.alert('Bill Restored', `Invoice #${bill.invoice_number} has been restored to active sales.`);
-      onBack();
+      try {
+        await onRestoreBill(bill.id);
+        Alert.alert('Bill Restored', `Invoice #${bill.invoice_number} has been restored to active sales.`);
+        onBack();
+      } catch (e: any) {
+        Alert.alert('Bill not restored', e?.message || 'Could not restore the bill. Please try again.');
+      }
     }
   };
 
@@ -789,7 +827,7 @@ export const InvoiceScreen = ({
 
         {/* Action Buttons */}
         <View style={styles.actionsRow}>
-          {!(isStylist || userRole === 'stylist') && (
+          {allowShare && (
             <Button
               label={isSendingWhatsApp ? 'Preparing PDF...' : 'WhatsApp'}
               icon={<WhatsAppIcon size={16} color="#FFFFFF" />}
@@ -803,7 +841,7 @@ export const InvoiceScreen = ({
             variant="secondary"
             disabled={isPrinting || isSendingWhatsApp}
             onPress={handlePrint}
-            style={{ flex: (isStylist || userRole === 'stylist') ? 1 : undefined, paddingHorizontal: 16 }}
+            style={{ flex: allowShare ? undefined : 1, paddingHorizontal: 16 }}
           />
         </View>
 
@@ -811,6 +849,13 @@ export const InvoiceScreen = ({
           Official invoice generated with StyleFleet.
         </Text>
       </ScrollView>
+
+      <WhatsAppAppPickerModal
+        visible={!!pendingWhatsApp}
+        apps={pendingWhatsApp?.apps || []}
+        onSelect={handlePickWhatsApp}
+        onCancel={() => setPendingWhatsApp(null)}
+      />
 
       {/* Phone prompt modal to redirect directly to customer WhatsApp */}
       <Modal

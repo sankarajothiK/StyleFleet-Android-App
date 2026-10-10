@@ -57,6 +57,7 @@ export interface Database {
           invoice_numbering_mode?: string | null;
           social_links?: Record<string, string> | null;
           upi_id?: string | null;
+          free_sales_limit?: number | null;
           created_at: string;
           updated_at: string;
         };
@@ -76,6 +77,7 @@ export interface Database {
           invoice_numbering_mode?: string | null;
           social_links?: Record<string, string> | null;
           upi_id?: string | null;
+          free_sales_limit?: number | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -95,6 +97,7 @@ export interface Database {
           invoice_numbering_mode?: string | null;
           social_links?: Record<string, string> | null;
           upi_id?: string | null;
+          free_sales_limit?: number | null;
           created_at?: string;
           updated_at?: string;
         };

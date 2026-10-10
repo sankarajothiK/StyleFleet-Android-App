@@ -1,3 +1,4 @@
+import { findDuplicateService } from '../utils/serviceName';
 import { supabase } from '../lib/supabase';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Service, ServiceCategory } from '../types/domain';
@@ -259,14 +260,42 @@ export class ServiceRepository {
     return seeded;
   }
 
+  /** Reads a menu-card photo through the import-menu Edge Function (the AI key stays on the server). */
+  async extractMenuItems(
+    imageBase64: string
+  ): Promise<{ category: string; name: string; price: number }[]> {
+    const { data, error } = await supabase.functions.invoke('import-menu', {
+      body: { imageBase64, mimeType: 'image/jpeg' },
+    });
+    if (error) {
+      // Surface the function's own message when it sent one
+      let message = error.message;
+      try {
+        const ctx = (error as { context?: Response }).context;
+        const body = ctx ? await ctx.json() : null;
+        if (body?.error) message = body.error;
+      } catch {
+        // keep the generic message
+      }
+      throw new Error(message || 'Menu import failed');
+    }
+    return Array.isArray(data?.items) ? data.items : [];
+  }
+
   async addService(
     shopId: string,
     categoryName: string,
     name: string,
-    priceRupees: number
+    priceRupees: number,
+    durationMinutes: number = 30
   ): Promise<Service> {
     const trimmedCat = categoryName.trim();
     const trimmedName = name.trim();
+
+    const dup = findDuplicateService(await this.getServices(shopId), trimmedName);
+    if (dup) {
+      throw new Error(`"${dup.name}" already exists in ${dup.category_name || 'your price list'}.`);
+    }
 
     // Ensure category exists in Supabase
     let catId: string | null = null;
@@ -288,7 +317,7 @@ export class ServiceRepository {
       category_name: trimmedCat,
       name: trimmedName,
       price_minor: Math.round(priceRupees * 100),
-      duration_minutes: 30,
+      duration_minutes: durationMinutes,
       is_active: true,
     };
 
@@ -297,7 +326,7 @@ export class ServiceRepository {
         shop_id: shopId,
         name: trimmedName,
         price_minor: Math.round(priceRupees * 100),
-        duration_minutes: 30,
+        duration_minutes: durationMinutes,
         is_active: true,
       };
       if (catId) {
@@ -405,6 +434,8 @@ export class ServiceRepository {
 
     const createdServices: Service[] = [];
     for (const it of extractedItems) {
+      // Skip anything already in the price list (or repeated within the menu itself)
+      if (findDuplicateService([...(await this.getServices(shopId))], it.name)) continue;
       const s = await this.addService(shopId, it.category, it.name, it.priceRupees);
       createdServices.push(s);
     }

@@ -3,74 +3,75 @@ import * as Font from 'expo-font';
 import { Text, TextInput, StyleSheet } from 'react-native';
 
 /**
- * Font Asset Mapping for Plus Jakarta Sans
+ * Font Asset Mapping for Nunito
  * Bundled directly in assets/fonts/ to guarantee 100% offline, cross-platform
  * consistency without ever falling back to device or system font settings.
  */
 export const fontAssets = {
   // Explicit semantic font names
-  'PlusJakartaSans-Regular': require('../../assets/fonts/PlusJakartaSans_400Regular.ttf'),
-  'PlusJakartaSans-Medium': require('../../assets/fonts/PlusJakartaSans_500Medium.ttf'),
-  'PlusJakartaSans-SemiBold': require('../../assets/fonts/PlusJakartaSans_600SemiBold.ttf'),
-  'PlusJakartaSans-Bold': require('../../assets/fonts/PlusJakartaSans_700Bold.ttf'),
-  'PlusJakartaSans-ExtraBold': require('../../assets/fonts/PlusJakartaSans_800ExtraBold.ttf'),
+  'Nunito-Regular': require('../../assets/fonts/Nunito_400Regular.ttf'),
+  'Nunito-Medium': require('../../assets/fonts/Nunito_500Medium.ttf'),
+  'Nunito-SemiBold': require('../../assets/fonts/Nunito_600SemiBold.ttf'),
+  'Nunito-Bold': require('../../assets/fonts/Nunito_700Bold.ttf'),
+  'Nunito-ExtraBold': require('../../assets/fonts/Nunito_800ExtraBold.ttf'),
 
   // Expo Google Fonts canonical names
-  'PlusJakartaSans_400Regular': require('../../assets/fonts/PlusJakartaSans_400Regular.ttf'),
-  'PlusJakartaSans_500Medium': require('../../assets/fonts/PlusJakartaSans_500Medium.ttf'),
-  'PlusJakartaSans_600SemiBold': require('../../assets/fonts/PlusJakartaSans_600SemiBold.ttf'),
-  'PlusJakartaSans_700Bold': require('../../assets/fonts/PlusJakartaSans_700Bold.ttf'),
-  'PlusJakartaSans_800ExtraBold': require('../../assets/fonts/PlusJakartaSans_800ExtraBold.ttf'),
+  'Nunito_400Regular': require('../../assets/fonts/Nunito_400Regular.ttf'),
+  'Nunito_500Medium': require('../../assets/fonts/Nunito_500Medium.ttf'),
+  'Nunito_600SemiBold': require('../../assets/fonts/Nunito_600SemiBold.ttf'),
+  'Nunito_700Bold': require('../../assets/fonts/Nunito_700Bold.ttf'),
+  'Nunito_800ExtraBold': require('../../assets/fonts/Nunito_800ExtraBold.ttf'),
 
   // Base family name fallback
-  'PlusJakartaSans': require('../../assets/fonts/PlusJakartaSans_400Regular.ttf'),
+  'Nunito': require('../../assets/fonts/Nunito_400Regular.ttf'),
 };
 
 let fontsLoaded = false;
 
 /**
- * Resolves the appropriate Plus Jakarta Sans font family variant based on style fontWeight.
+ * Resolves the appropriate Nunito font family variant based on style fontWeight.
  * Guarantees that system fonts (e.g. Samsung One, Roboto, Choco) cannot override the app font.
  */
-export function resolvePlusJakartaSansFont(style: any): string {
-  if (!style) return 'PlusJakartaSans-Regular';
+export function resolveNunitoFont(style: any): string {
+  if (!style) return 'Nunito-Regular';
   const flattened = StyleSheet.flatten(style) || {};
   const weight = String(flattened.fontWeight || '400');
   if (
     flattened.fontFamily &&
     typeof flattened.fontFamily === 'string' &&
-    flattened.fontFamily.startsWith('PlusJakartaSans')
+    flattened.fontFamily.startsWith('Nunito')
   ) {
     return flattened.fontFamily;
   }
   if (weight === '800' || weight === '900' || weight === 'extraBold' || weight === 'black') {
-    return 'PlusJakartaSans-ExtraBold';
+    return 'Nunito-ExtraBold';
   }
   if (weight === '700' || weight === 'bold') {
-    return 'PlusJakartaSans-Bold';
+    return 'Nunito-Bold';
   }
   if (weight === '600' || weight === 'semibold') {
-    return 'PlusJakartaSans-SemiBold';
+    return 'Nunito-SemiBold';
   }
   if (weight === '500' || weight === 'medium') {
-    return 'PlusJakartaSans-Medium';
+    return 'Nunito-Medium';
   }
-  return 'PlusJakartaSans-Regular';
+  return 'Nunito-Regular';
 }
 
 /**
  * Applies global default font family to React Native Text and TextInput components.
- * Monkey-patches render to permanently lock the font to Plus Jakarta Sans regardless
+ * Monkey-patches render to permanently lock the font to Nunito regardless
  * of Android phone font settings.
  */
 export function applyGlobalFontDefaults() {
-  const defaultFont = 'PlusJakartaSans-Regular';
+  const defaultFont = 'Nunito-Regular';
 
   try {
     const textComp = Text as any;
     if (!textComp.defaultProps) {
       textComp.defaultProps = {};
     }
+    textComp.defaultProps.maxFontSizeMultiplier = textComp.defaultProps.maxFontSizeMultiplier ?? 1.3;
     const existingTextStyle = textComp.defaultProps.style;
     textComp.defaultProps.style = Array.isArray(existingTextStyle)
       ? [{ fontFamily: defaultFont }, ...existingTextStyle]
@@ -84,7 +85,7 @@ export function applyGlobalFontDefaults() {
       textComp.render = function (...args: any[]) {
         const origin = origTextRender.apply(this, args);
         if (!origin || !React.isValidElement(origin)) return origin;
-        const font = resolvePlusJakartaSansFont((origin.props as any)?.style);
+        const font = resolveNunitoFont((origin.props as any)?.style);
         return React.cloneElement(origin, {
           style: [{ fontFamily: font }, (origin.props as any)?.style, { fontFamily: font }],
         } as any);
@@ -99,6 +100,7 @@ export function applyGlobalFontDefaults() {
     if (!textInputComp.defaultProps) {
       textInputComp.defaultProps = {};
     }
+    textInputComp.defaultProps.maxFontSizeMultiplier = textInputComp.defaultProps.maxFontSizeMultiplier ?? 1.3;
     const existingInputStyle = textInputComp.defaultProps.style;
     textInputComp.defaultProps.style = Array.isArray(existingInputStyle)
       ? [{ fontFamily: defaultFont }, ...existingInputStyle]
@@ -112,7 +114,7 @@ export function applyGlobalFontDefaults() {
       textInputComp.render = function (...args: any[]) {
         const origin = origInputRender.apply(this, args);
         if (!origin || !React.isValidElement(origin)) return origin;
-        const font = resolvePlusJakartaSansFont((origin.props as any)?.style);
+        const font = resolveNunitoFont((origin.props as any)?.style);
         return React.cloneElement(origin, {
           style: [{ fontFamily: font }, (origin.props as any)?.style, { fontFamily: font }],
         } as any);
@@ -124,7 +126,7 @@ export function applyGlobalFontDefaults() {
 }
 
 /**
- * Loads Plus Jakarta Sans font files synchronously during app initialization.
+ * Loads Nunito font files synchronously during app initialization.
  */
 export async function loadAppFonts(): Promise<boolean> {
   if (fontsLoaded) return true;
@@ -134,7 +136,7 @@ export async function loadAppFonts(): Promise<boolean> {
     fontsLoaded = true;
     return true;
   } catch (error) {
-    console.warn('Notice: Plus Jakarta Sans font loading warning:', error);
+    console.warn('Notice: Nunito font loading warning:', error);
     applyGlobalFontDefaults();
     return false;
   }

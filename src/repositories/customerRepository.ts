@@ -2,6 +2,7 @@ import { supabase } from '../lib/supabase';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Customer } from '../types/domain';
 import { generateUuid, isValidUuid } from '../utils/uuid';
+import { friendlyDbMessage } from '../utils/persist';
 
 const STORAGE_KEY_CUSTOMERS = '@salon_os_customers_cache';
 
@@ -346,7 +347,12 @@ export class CustomerRepository {
         .select()
         .single();
 
-      if (!error && data) {
+      if (error || !data) {
+        // Save first: a customer kept only on this phone would never reach the owner
+        throw new Error(friendlyDbMessage(error, 'the customer'));
+      }
+
+      {
         newCust.id = data.id;
         newCust.created_at = data.created_at;
 
@@ -377,14 +383,10 @@ export class CustomerRepository {
             } as any);
           }
         }
-      } else if (error) {
-        console.error('Supabase customer insert error:', error);
       }
     } catch (e: any) {
-      if (e?.message && e.message.includes('already exists')) {
-        throw e;
-      }
-      console.warn('Supabase customer add error:', e);
+      if (e instanceof Error) throw e;
+      throw new Error(friendlyDbMessage({ message: String(e?.message || e) }, 'the customer'));
     }
 
     const updated = [newCust, ...current.filter((c) => (c.phone || '').replace(/\D/g, '').slice(-10) !== cleanPhone)];
@@ -424,17 +426,33 @@ export class CustomerRepository {
     }));
 
     const createdCustomers: Customer[] = [];
+    const dueByPhone = new Map(
+      uniqueContacts.map((c) => [c.phone.replace(/D/g, '').slice(-10), c.initialDueMinor || 0] as const)
+    );
+    let saveError: { code?: string; message?: string } | null = null;
 
     try {
-      const { data, error } = await supabase
+      let { data, error } = await supabase
         .from('customers')
         .insert(rowsToInsert as any)
         .select();
 
+      // One bad row fails the whole batch: save the rest one by one
+      if (error || !data) {
+        const saved: any[] = [];
+        for (const row of rowsToInsert) {
+          const one = await supabase.from('customers').insert(row as any).select().single();
+          if (one.data) saved.push(one.data);
+          else saveError = one.error ?? saveError;
+        }
+        data = saved;
+        error = null;
+      }
+
       if (!error && data) {
         for (let i = 0; i < data.length; i++) {
           const row = data[i];
-          const due = contacts[i]?.initialDueMinor || 0;
+          const due = dueByPhone.get(String(row.phone || '').replace(/D/g, '').slice(-10)) || 0;
 
           if (due > 0) {
             const invNum = `DUE-${(Date.now() + i).toString().slice(-6)}`;
@@ -478,11 +496,15 @@ export class CustomerRepository {
             created_at: row.created_at,
           });
         }
-      } else if (error) {
-        console.error('Supabase contacts batch import error:', error);
       }
     } catch (e) {
       console.warn('Batch import contacts error:', e);
+      saveError = { message: e instanceof Error ? e.message : String(e) };
+    }
+
+    // Nothing saved: say so, never report "0 imported" as a success
+    if (createdCustomers.length === 0 && saveError) {
+      throw new Error(friendlyDbMessage(saveError, 'the contacts'));
     }
 
     const freshCurrent = (await this.getCachedCustomers(shopId)) || [];
@@ -903,14 +925,20 @@ export class CustomerRepository {
         const updatedNotes = inactive
           ? (currentNotes.includes('[inactive]') ? currentNotes : `[inactive] ${currentNotes}`.trim())
           : currentNotes.replace('[inactive]', '').trim();
-        await supabase
+        const { error: notesError } = await supabase
           .from('customers')
           .update({ notes: updatedNotes } as any)
           .eq('id', customerId)
           .eq('shop_id', shopId);
+        if (notesError) throw new Error(notesError.message);
       }
     } catch (e) {
-      console.warn('Customer inactive update fallback:', e);
+      // Roll the local cache back so the app never shows a delete the backend didn't accept
+      if (target) {
+        target.is_active = inactive;
+        await this.cacheCustomers(shopId, list);
+      }
+      throw e instanceof Error ? e : new Error('Could not update customer');
     }
 
     return true;

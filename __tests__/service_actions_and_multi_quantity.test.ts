@@ -5,7 +5,7 @@ import { Service, Appointment } from '../src/types/domain';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 describe('CHANGE 1: Service Actions & CHANGE 2: Multi-Quantity Service Selection', () => {
-  const shopId = '00000000-0000-0000-0000-000000000001';
+  const shopId = 'local_shop_service_actions_test';
 
   beforeEach(async () => {
     jest.clearAllMocks();

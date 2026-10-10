@@ -385,6 +385,19 @@ export const SparklesIcon = ({ size = 18, color = 'currentColor', strokeWidth = 
   </Svg>
 );
 
+/** Document with scan corners: import a price list from a photo of a menu card */
+export const MenuScanIcon = ({ size = 22, color = 'currentColor', strokeWidth = 1.7 }: IconProps) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+    <Path
+      d="M4 8V6a2 2 0 012-2h2M16 4h2a2 2 0 012 2v2M20 16v2a2 2 0 01-2 2h-2M8 20H6a2 2 0 01-2-2v-2M8 9h8M8 12h8M8 15h5"
+      stroke={color}
+      strokeWidth={strokeWidth}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+  </Svg>
+);
+
 export const MoreVerticalIcon = ({ size = 18, color = 'currentColor', strokeWidth = 1.7 }: IconProps) => (
   <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
     <Path

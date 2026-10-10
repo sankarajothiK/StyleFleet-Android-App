@@ -7,6 +7,7 @@ export type Period = 'Day' | 'Week' | 'Month';
 
 export type ScreenName =
   | 'splash'
+  | 'welcomeTour'
   | 'phone'
   | 'otp'
   | 'register'
@@ -59,6 +60,10 @@ export interface StylistPermissions {
   team: boolean;
   reminders: boolean;
   profile: boolean;
+  /** With `expenses` on: may also see expenses from before today. Off = today only. */
+  expensesHistory: boolean;
+  /** May send a bill to a customer (WhatsApp / PDF). */
+  shareBills: boolean;
 }
 
 export const DEFAULT_STYLIST_PERMISSIONS: StylistPermissions = {
@@ -70,6 +75,8 @@ export const DEFAULT_STYLIST_PERMISSIONS: StylistPermissions = {
   team: false,
   reminders: true,
   profile: false,
+  expensesHistory: false,
+  shareBills: false,
 };
 
 export interface StaffMember {
@@ -232,6 +239,10 @@ export interface Expense {
   payment_method: string;
   expense_date: string;
   created_at: string;
+  /** false = listed but not subtracted from profit. Missing means it counts. */
+  include_in_profit?: boolean;
+  /** Team member this expense is for (salary, advance...). null / missing = ordinary shop expense. */
+  staff_id?: string | null;
 }
 
 export interface ReminderItem {
@@ -247,6 +258,7 @@ export interface ReminderItem {
   customer_name?: string | null;
   customer_phone?: string | null;
   amount_minor?: number;
+  starts_at?: string;
 }
 
 export type SubscriptionStatus =

@@ -94,11 +94,15 @@ export class SubscriptionRepository {
             .from('subscriptions')
             .select('*')
             .eq('shop_id', shopId)
+            .in('status', ['active', 'cancelled'])
             .order('created_at', { ascending: false })
-            .limit(1);
+            .limit(10);
 
+          // Pending / failed payment attempts must never hide a paid or manually granted plan:
+          // take the newest active plan that has not expired yet
           if (!error && data && data.length > 0) {
-            subRecord = data[0] as SubscriptionRecord;
+            const rows = data as SubscriptionRecord[];
+            subRecord = rows.find((r) => !calculateSubscriptionStatus(r).isExpired) || rows[0];
           }
         } catch {
           // Table may not exist yet or offline
@@ -345,6 +349,8 @@ export class SubscriptionRepository {
     orderId: string;
     shopId: string;
     planId: PlanId;
+    /** Whether the salon paid the launch-offer price (used only if the gateway does not report the amount) */
+    isLaunchOffer?: boolean;
   }): Promise<{ success: boolean; message: string }> {
     // 1. Try Edge function first
     try {
@@ -358,11 +364,14 @@ export class SubscriptionRepository {
       });
 
       if (!error && data && data.success) {
+        const paidMinor = Number(data?.subscription?.amount_minor);
         await this.recordSubscription({
           shopId: params.shopId,
           userId: '',
           planId: params.planId,
           orderId: params.orderId,
+          isLaunchOffer: params.isLaunchOffer,
+          amountMinor: Number.isFinite(paidMinor) && paidMinor > 0 ? paidMinor : undefined,
         });
         return {
           success: true,
@@ -402,12 +411,15 @@ export class SubscriptionRepository {
       const isPaid = orderData.order_status === 'PAID' || orderData.link_status === 'PAID';
 
       if (isPaid) {
+        const paidMinor = Math.round(Number(orderData.order_amount) * 100);
         await this.recordSubscription({
           shopId: params.shopId,
           userId: '',
           planId: params.planId,
           orderId: params.orderId,
           paymentId: (orderData.cf_order_id || orderData.cf_link_id)?.toString(),
+          isLaunchOffer: params.isLaunchOffer,
+          amountMinor: Number.isFinite(paidMinor) && paidMinor > 0 ? paidMinor : undefined,
         });
 
         return {
@@ -437,8 +449,11 @@ export class SubscriptionRepository {
     planId: PlanId;
     orderId?: string;
     paymentId?: string;
+    /** What the gateway says was actually paid, in paise. Wins over the plan's list price. */
+    amountMinor?: number;
+    isLaunchOffer?: boolean;
   }): Promise<SubscriptionRecord | null> {
-    const plan = getPlanById(params.planId);
+    const plan = getPlanById(params.planId, params.isLaunchOffer ?? false);
     if (!plan) throw new Error('Invalid plan');
 
     const startDate = new Date();
@@ -457,7 +472,7 @@ export class SubscriptionRepository {
       subscription_end_date: endDate.toISOString(),
       cashfree_order_id: params.orderId || null,
       cashfree_payment_id: params.paymentId || null,
-      amount_minor: plan.priceInRupees * 100,
+      amount_minor: params.amountMinor ?? plan.priceInRupees * 100,
       currency: 'INR',
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),

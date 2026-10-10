@@ -50,12 +50,12 @@ describe('First 30 Days Trial Subscription Experience', () => {
   it('has exact pricing matching specification for the 3 launch offer plans', () => {
     // 3 Months Launch Offer
     const threeMo = getPlanById('3_months', true)!;
-    expect(threeMo.priceInRupees).toBe(1499);
+    expect(threeMo.priceInRupees).toBe(2999);
     expect(threeMo.discountPercent).toBe(0);
 
     // 6 Months Launch Offer (20% OFF)
     const sixMo = getPlanById('6_months', true)!;
-    expect(sixMo.priceInRupees).toBe(2399);
+    expect(sixMo.priceInRupees).toBe(4799);
     expect(sixMo.badge).toBe('20% OFF');
     expect(sixMo.discountPercent).toBe(20);
 
@@ -69,19 +69,19 @@ describe('First 30 Days Trial Subscription Experience', () => {
   it('has exact pricing matching specification for standard plans (after 30 days)', () => {
     // 3 Months Standard
     const threeMo = getPlanById('3_months', false)!;
-    expect(threeMo.priceInRupees).toBe(1499);
+    expect(threeMo.priceInRupees).toBe(2999);
     expect(threeMo.discountPercent).toBe(0);
 
     // 6 Months Standard
     const sixMo = getPlanById('6_months', false)!;
-    expect(sixMo.priceInRupees).toBe(2799);
-    expect(sixMo.badge).toBe('MOST POPULAR (7% OFF)');
-    expect(sixMo.discountPercent).toBe(7);
+    expect(sixMo.priceInRupees).toBe(5999);
+    expect(sixMo.badge).toBeUndefined();
+    expect(sixMo.discountPercent).toBe(0);
 
     // 1 Year Standard
     const oneYr = getPlanById('12_months', false)!;
-    expect(oneYr.priceInRupees).toBe(4999);
-    expect(oneYr.badge).toBe('BEST VALUE (17% OFF)');
-    expect(oneYr.discountPercent).toBe(17);
+    expect(oneYr.priceInRupees).toBe(11999);
+    expect(oneYr.badge).toBeUndefined();
+    expect(oneYr.discountPercent).toBe(0);
   });
 });

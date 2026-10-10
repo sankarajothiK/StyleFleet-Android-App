@@ -4,9 +4,14 @@ import { DEFAULT_STYLIST_PERMISSIONS, StylistPermissions } from '../src/types/do
 
 // Mock Supabase
 jest.mock('../src/lib/supabase', () => {
+  const uid = () =>
+    'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+      const r = (Math.random() * 16) | 0;
+      return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+    });
   const tableData: Record<string, any[]> = {
     staff: [],
-    shops: [{ id: 'shop_test_1', name: 'Elite Glamour Salon' }],
+    shops: [{ id: '00000000-0000-4000-8000-0000000000a1', name: 'Elite Glamour Salon' }],
     bills: [],
     bill_items: [],
   };
@@ -24,7 +29,7 @@ jest.mock('../src/lib/supabase', () => {
             const arr = Array.isArray(records) ? records : [records];
             let lastRow: any = null;
             arr.forEach((r, idx) => {
-              const row = { id: r.id || `staff_row_${Date.now()}_${idx}`, ...r };
+              const row = { id: r.id || uid(), ...r };
               tableData[table] = tableData[table] || [];
               tableData[table].push(row);
               lastRow = row;
@@ -42,6 +47,12 @@ jest.mock('../src/lib/supabase', () => {
           update: jest.fn((updates: any) => {
             return {
               eq: jest.fn((col1: string, val1: any) => ({
+                select: () => {
+                  const items = tableData[table] || [];
+                  const hit = items.filter((item) => item[col1] === val1);
+                  hit.forEach((item) => Object.assign(item, updates));
+                  return Promise.resolve({ data: hit, error: null });
+                },
                 eq: jest.fn((col2: string, val2: any) => {
                   const items = tableData[table] || [];
                   items.forEach((item) => {
@@ -49,7 +60,12 @@ jest.mock('../src/lib/supabase', () => {
                       Object.assign(item, updates);
                     }
                   });
-                  return Promise.resolve({ data: null, error: null });
+                  const updated = items.filter((item) => item[col1] === val1 && item[col2] === val2);
+                  const result = { data: null, error: null };
+                  return {
+                    select: () => Promise.resolve({ data: updated, error: null }),
+                    then: (resolve: any) => Promise.resolve(resolve(result)),
+                  };
                 }),
                 then: (resolve: any) => {
                   const items = tableData[table] || [];
@@ -96,7 +112,7 @@ jest.mock('../src/lib/supabase', () => {
 });
 
 describe('Teams, Stylist Invitations & Report Access Suite', () => {
-  const shopId = 'shop_test_1';
+  const shopId = '00000000-0000-4000-8000-0000000000a1';
   const shopName = 'Elite Glamour Salon';
 
   test('1. STYLEFLEET_PLAY_STORE_URL constant points to official Play Store listing', () => {
@@ -192,6 +208,8 @@ describe('Teams, Stylist Invitations & Report Access Suite', () => {
       team: false,
       reminders: true,
       profile: false,
+      expensesHistory: false,
+      shareBills: false,
     });
   });
 
@@ -205,9 +223,11 @@ describe('Teams, Stylist Invitations & Report Access Suite', () => {
       team: false,
       reminders: true,
       profile: false,
+      expensesHistory: false,
+      shareBills: false,
     };
 
-    const shop2 = 'shop_test_2';
+    const shop2 = '00000000-0000-4000-8000-0000000000a2';
     const stylist = await staffRepository.addStaff(shop2, 'Deepak Verma', 'Colorist', '9876500004');
     await staffRepository.updateStaffPermissions(shop2, stylist.id, customPerms);
 
@@ -218,7 +238,7 @@ describe('Teams, Stylist Invitations & Report Access Suite', () => {
   });
 
   test('11. Stylist rating updates and persists properly', async () => {
-    const shop3 = 'shop_test_3';
+    const shop3 = '00000000-0000-4000-8000-0000000000a3';
     const stylist = await staffRepository.addStaff(shop3, 'Anjali Roy', 'Senior Stylist', '9876500005');
     expect(stylist.rating).toBe('5.0');
 
@@ -234,7 +254,7 @@ describe('Teams, Stylist Invitations & Report Access Suite', () => {
   });
 
   test('12. Stylist rating formats non-numeric or invalid ratings gracefully to 5.0', async () => {
-    const shop3 = 'shop_test_3';
+    const shop3 = '00000000-0000-4000-8000-0000000000a3';
     const list = await staffRepository.getStaff(shop3);
     const stylist = list[0];
     const updated = await staffRepository.updateStaffRating(shop3, stylist.id, 'invalid');

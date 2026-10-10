@@ -15,6 +15,8 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '../../theme/ThemeContext';
+import { GlassBackdrop } from '../../components/common/GlassBackdrop';
+import { getGlass } from '../../theme/glass';
 import { useLanguage } from '../../i18n/LanguageContext';
 import { Button } from '../../components/common/Button';
 import {
@@ -32,8 +34,11 @@ import {
 import { Customer, StaffMember, Service, Bill } from '../../types/domain';
 import { inr, inrFromMinor, getInitials } from '../../utils/format';
 import { radii } from '../../theme/spacing';
+import { getRecentCustomers } from '../../services/quickBookService';
+import { orderServicesForQuickPick } from '../../services/servicePriority';
 import { QuickContactPickerModal } from '../../components/customers/QuickContactPickerModal';
 import { shopRepository } from '../../repositories/shopRepository';
+import { FREE_SALES_LIMIT } from '../../utils/subscriptionUtils';
 
 interface NewBillScreenProps {
   customers: Customer[];
@@ -48,9 +53,13 @@ interface NewBillScreenProps {
   initialServiceIds?: string[] | null;
   initialServiceQuantities?: Record<string, number> | null;
   initialStaffId?: string | null;
+  /** The logged-in stylist's id (stylist sessions only): pre-selected as the stylist on a new bill. */
+  defaultStaffId?: string | null;
   initialStaffName?: string | null;
   onBack: () => void;
   onAddNewCustomer?: (name: string, phone: string) => Promise<Customer>;
+  /** True while the bill is being saved: the button shows progress and ignores taps. */
+  isSavingBill?: boolean;
   onProceedToInvoice: (billData: {
     customerName: string;
     customerId: string | null;
@@ -68,6 +77,8 @@ interface NewBillScreenProps {
   ownerName?: string;
   isPro?: boolean;
   totalSalesCount?: number;
+  /** Free-plan sales limit for this salon */
+  freeSalesLimit?: number;
   onUpgradePlan?: () => void;
   editingBill?: Bill | null;
 }
@@ -85,13 +96,16 @@ export const NewBillScreen = ({
   initialServiceIds = null,
   initialServiceQuantities = null,
   initialStaffId = null,
+  defaultStaffId = null,
   initialStaffName = null,
   ownerName = 'Owner',
   isPro = false,
   totalSalesCount = 0,
+  freeSalesLimit = FREE_SALES_LIMIT,
   onBack,
   onAddNewCustomer,
   onProceedToInvoice,
+  isSavingBill = false,
   onUpgradePlan,
   editingBill = null,
 }: NewBillScreenProps) => {
@@ -225,15 +239,38 @@ export const NewBillScreen = ({
     setServiceQuantities((prev) => {
       const next = { ...prev };
       for (const id of incomingIds) {
-        const addQty = (initialServiceQuantities && initialServiceQuantities[id]) || 1;
-        // Merge quantities for same service!
-        next[id] = (next[id] || 0) + addQty;
+        // Already present (seeded from the same props): keep its quantity, never add it twice
+        if (next[id]) continue;
+        next[id] = (initialServiceQuantities && initialServiceQuantities[id]) || 1;
       }
       return next;
     });
   }, [initialServiceIds, initialServiceQuantities, initialServiceId, editingBill]);
 
-  const [isServicesExpanded, setIsServicesExpanded] = useState(false);
+  const [isServicesExpanded, setIsServicesExpanded] = useState(true);
+
+  // Quick close: customer and services already come from the appointment, so show a compact
+  // summary and only open the full pickers on request.
+  const [isQuick] = useState<boolean>(
+    () =>
+      !editingBill &&
+      Boolean(initialCustomerId) &&
+      Boolean((initialServiceIds && initialServiceIds.length > 0) || initialServiceId)
+  );
+  const [showFullDetails, setShowFullDetails] = useState(false);
+  const [isWalkInBill, setIsWalkInBill] = useState(false);
+
+  // Closing a walk-in appointment (services known, no client yet): ask for the client's name and
+  // phone straight away so the bill is saved against a real customer.
+  useEffect(() => {
+    if (editingBill) return;
+    const hasServices = Boolean((initialServiceIds && initialServiceIds.length > 0) || initialServiceId);
+    if (hasServices && !initialCustomerId) {
+      setIsAddClientModalOpen(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const [showExtras, setShowExtras] = useState(false);
 
   // Dual Stylist Support: can select 1 or 2 stylists, or [-1] for "No Stylist (Owner)"
   const initialStaffIndices = useMemo(() => {
@@ -273,10 +310,16 @@ export const NewBillScreen = ({
       const idx = staff.findIndex((s) => s.id === initialStaffId);
       return idx !== -1 ? [idx] : [];
     }
+    if (defaultStaffId) {
+      const idx = staff.findIndex((s) => s.id === defaultStaffId && s.is_active !== false);
+      if (idx !== -1) return [idx];
+    }
     return [];
-  }, [editingBill, initialStaffName, initialStaffId, staff, ownerName]);
+  }, [editingBill, initialStaffName, initialStaffId, defaultStaffId, staff, ownerName]);
 
   const [selectedStaffIndices, setSelectedStaffIndices] = useState<number[]>(initialStaffIndices);
+  // A logged-in stylist always books as themselves: no stylist choice is shown
+  const stylistLocked = Boolean(defaultStaffId) && !editingBill && staff.some((s) => s.id === defaultStaffId);
 
   // Bill Date state (default Today, allows selecting previous valid dates, no future dates)
   const [selectedBillDate, setSelectedBillDate] = useState<Date>(() => {
@@ -350,6 +393,11 @@ export const NewBillScreen = ({
     ? customers.find((c) => c.id === selectedCustomerId)
     : null;
   const customerName = selectedCustomer ? selectedCustomer.name : '';
+  // Customer chose not to give details: bill without a client (no dues possible)
+  const isWalkIn = isWalkInBill && !selectedCustomer;
+  const walkInNeedsClient = isWalkIn && (paymentMode === 'Partial Pay' || paymentMode === 'Fully Pending');
+  const orderedServices = useMemo(() => orderServicesForQuickPick(services), [services]);
+  const recentClients = useMemo(() => getRecentCustomers(customers, [], bills, 5), [customers, bills]);
 
   // Compute top used / popular services from real bills
   const { popularServices, categoryGroups } = useMemo(() => {
@@ -389,37 +437,35 @@ export const NewBillScreen = ({
     return { popularServices: popular, categoryGroups: groups };
   }, [services, bills]);
 
-  // Repeated tapping increments quantity (1 -> 2 -> 3...)
-  const handleServicePress = (svcId: string) => {
-    setSelectedServiceIds((prev) => {
-      if (!prev.includes(svcId)) {
-        return [...prev, svcId];
-      }
-      return prev;
-    });
-    setServiceQuantities((prev) => ({
-      ...prev,
-      [svcId]: (prev[svcId] || 0) + 1,
-    }));
-  };
+  // One tap = 1, two taps = 2 ... up to 5; the next tap removes it. Long-press removes at once.
+  const MAX_SERVICE_QTY = 5;
 
-  const handleDecrementOrRemoveService = (svcId: string) => {
+  const handleRemoveService = (svcId: string) => {
+    setSelectedServiceIds((prev) => prev.filter((id) => id !== svcId));
     setServiceQuantities((prev) => {
-      const currentQty = prev[svcId] || 1;
-      if (currentQty > 1) {
-        return { ...prev, [svcId]: currentQty - 1 };
-      }
       const next = { ...prev };
       delete next[svcId];
       return next;
     });
-    setSelectedServiceIds((prev) => {
-      const currentQty = serviceQuantities[svcId] || 1;
-      if (currentQty > 1) {
-        return prev;
-      }
-      return prev.filter((id) => id !== svcId);
-    });
+  };
+
+  const handleServiceDecrement = (svcId: string) => {
+    const current = serviceQuantities[svcId] || 0;
+    if (current <= 1) {
+      handleRemoveService(svcId);
+      return;
+    }
+    setServiceQuantities((prev) => ({ ...prev, [svcId]: current - 1 }));
+  };
+
+  const handleServicePress = (svcId: string) => {
+    const current = serviceQuantities[svcId] || 0;
+    if (current >= MAX_SERVICE_QTY) {
+      handleRemoveService(svcId);
+      return;
+    }
+    setSelectedServiceIds((prev) => (prev.includes(svcId) ? prev : [...prev, svcId]));
+    setServiceQuantities((prev) => ({ ...prev, [svcId]: current + 1 }));
   };
 
   const toggleService = handleServicePress;
@@ -515,9 +561,9 @@ export const NewBillScreen = ({
 
   const handleProceed = () => {
     // 100-sales free limit check (new sales only)
-    if (!editingBill && totalSalesCount >= 100 && !isPro) {
+    if (!editingBill && totalSalesCount >= freeSalesLimit && !isPro) {
       Alert.alert(
-        '100-Sales Limit Reached',
+        `${freeSalesLimit}-Sales Limit Reached`,
         'You have reached the free limit of 100 sales on this salon account.\n\nPlease upgrade to Pro to continue creating and issuing bills.',
         [
           { text: 'Upgrade to Pro', onPress: () => onUpgradePlan && onUpgradePlan() },
@@ -527,12 +573,13 @@ export const NewBillScreen = ({
       return;
     }
 
-    if (!selectedCustomer) {
+    if (!selectedCustomer && !isWalkIn) {
       Alert.alert(
         'Client Required',
-        'Please select or add a client for this bill. Walk-in billing is disabled.',
+        'Please select or add a client for this bill, or choose Walk-in if the customer does not want to share details.',
         [
           { text: '+ Add Client', onPress: () => setIsAddClientModalOpen(true) },
+          { text: 'Walk-in', onPress: () => setIsWalkInBill(true) },
           { text: 'Cancel', style: 'cancel' },
         ]
       );
@@ -551,6 +598,18 @@ export const NewBillScreen = ({
 
     if (!paymentMode) {
       Alert.alert('Payment Mode Required', 'Please select a payment mode (Cash, UPI, Card, Partial Pay, or Fully Pending).');
+      return;
+    }
+
+    if (walkInNeedsClient) {
+      Alert.alert(
+        t('billWalkInNeedsClient', 'Dues need a client name and phone'),
+        t('billWalkInNote', 'Walk-in bill: no client details are saved, so dues cannot be tracked.'),
+        [
+          { text: '+ Add Client', onPress: () => setIsAddClientModalOpen(true) },
+          { text: t('cancel', 'Cancel'), style: 'cancel' },
+        ]
+      );
       return;
     }
 
@@ -583,8 +642,8 @@ export const NewBillScreen = ({
         : paymentMode;
 
     onProceedToInvoice({
-      customerName: selectedCustomer.name,
-      customerId: selectedCustomer.id,
+      customerName: selectedCustomer ? selectedCustomer.name : t('bkWalkIn', 'Walk-in'),
+      customerId: selectedCustomer ? selectedCustomer.id : null,
       staffName: currentStaff.name,
       staffId: currentStaff.id,
       staffIds: selectedStaffMembers.map((s) => s.id),
@@ -647,6 +706,7 @@ export const NewBillScreen = ({
 
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.bg }]}>
+      <GlassBackdrop isDark={colors.isDark} />
       {/* Top Bar */}
       <View style={styles.topBar}>
         <Button variant="icon" onPress={onBack}>
@@ -669,13 +729,91 @@ export const NewBillScreen = ({
         automaticallyAdjustKeyboardInsets={true}
         showsVerticalScrollIndicator={false}
       >
+        {isQuick && !showFullDetails ? (
+          <View
+            style={[
+              styles.quickCard,
+              { ...getGlass(colors.isDark).raised, borderWidth: 1 },
+            ]}
+          >
+            {/* Customer */}
+            <View style={styles.quickRow}>
+              <View style={[styles.quickAvatar, { backgroundColor: colors.accent800 }]}>
+                <Text style={{ color: colors.accent100, fontSize: 13, fontWeight: '800' }}>
+                  {getInitials(selectedCustomer?.name || '?')}
+                </Text>
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text numberOfLines={1} style={[styles.quickName, { color: colors.text }]}>
+                  {selectedCustomer?.name || ''}
+                </Text>
+                <Text style={{ color: colors.textDim, fontSize: 11.5 }}>
+                  {selectedCustomer ? `+91 ${selectedCustomer.phone}` : ''}
+                </Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setShowFullDetails(true)}
+                activeOpacity={0.8}
+                style={[styles.quickEditBtn, { borderColor: colors.accent }]}
+              >
+                <Text style={{ color: colors.accent, fontSize: 12, fontWeight: '700' }}>{t('edit', 'Edit')}</Text>
+              </TouchableOpacity>
+            </View>
+
+            <View style={[styles.quickDivider, { backgroundColor: colors.divider }]} />
+
+            {/* Services */}
+            {cartItems.map((it, idx) => (
+              <View key={`${it.name}_${idx}`} style={styles.quickLine}>
+                <Text style={[styles.quickLineName, { color: colors.text }]}>
+                  {it.name}
+                  {it.quantity > 1 ? `  ×${it.quantity}` : ''}
+                </Text>
+                <Text style={[styles.quickLinePrice, { color: colors.text }]}>{inrFromMinor(it.priceMinor)}</Text>
+              </View>
+            ))}
+
+            <View style={[styles.quickDivider, { backgroundColor: colors.divider }]} />
+
+            {/* Stylist + date */}
+            <View style={styles.quickLine}>
+              {selectedStaffIndices.length > 0 ? (
+                <Text style={{ color: colors.textDim, fontSize: 12, flex: 1 }} numberOfLines={1}>
+                  {selectedStaffIndices
+                    .map((i) => (i === -1 ? ownerName || 'Owner' : staff[i]?.name))
+                    .filter(Boolean)
+                    .join(' & ')}
+                </Text>
+              ) : (
+                <TouchableOpacity style={{ flex: 1 }} onPress={() => setShowFullDetails(true)} activeOpacity={0.8}>
+                  <Text style={{ color: '#EF4444', fontSize: 12, fontWeight: '700' }} numberOfLines={1}>
+                    {t('bkCtaSelectStylist', 'Select Stylist')} ›
+                  </Text>
+                </TouchableOpacity>
+              )}
+              <TouchableOpacity onPress={() => setShowDatePickerModal(true)} activeOpacity={0.8}>
+                <Text style={{ color: colors.accent, fontSize: 12, fontWeight: '700' }}>
+                  {selectedBillDate.toDateString() === new Date().toDateString()
+                    ? `${t('today', 'Today')} ✎`
+                    : `${selectedBillDate.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })} ✎`}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        ) : (
+        <>
+        {isQuick && (
+          <TouchableOpacity onPress={() => setShowFullDetails(false)} activeOpacity={0.8} style={{ alignSelf: 'flex-end', marginBottom: 8 }}>
+            <Text style={{ color: colors.accent, fontSize: 12.5, fontWeight: '700' }}>{t('bkOk', 'OK')} ✓</Text>
+          </TouchableOpacity>
+        )}
         {/* BILL DATE SELECTION */}
         <View
           style={{
             flexDirection: 'row',
             alignItems: 'center',
             justifyContent: 'space-between',
-            backgroundColor: colors.surface,
+            ...getGlass(colors.isDark).card,
             borderRadius: radii.md,
             borderWidth: 1,
             borderColor: colors.divider,
@@ -715,13 +853,62 @@ export const NewBillScreen = ({
         {/* CUSTOMER SELECTION AREA */}
         <Text style={[styles.sectionLabel, { color: colors.textDim }]}>{t('client')}</Text>
 
+        {!selectedCustomer && (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} keyboardShouldPersistTaps="handled" style={{ marginBottom: 8 }}>
+            <View style={{ flexDirection: 'row', gap: 6 }}>
+              <TouchableOpacity
+                activeOpacity={0.8}
+                onPress={() => setIsWalkInBill((v) => !v)}
+                accessibilityRole="button"
+                accessibilityState={{ selected: isWalkIn }}
+                style={[
+                  styles.recentChip,
+                  isWalkIn
+                    ? { backgroundColor: colors.accent, borderWidth: 1, borderColor: colors.accent }
+                    : { ...getGlass(colors.isDark).raised, borderWidth: 1 },
+                  { paddingLeft: 12 },
+                ]}
+              >
+                <Text style={{ color: isWalkIn ? '#161826' : colors.text, fontSize: 12.5, fontWeight: '700' }}>
+                  {t('bkWalkIn', 'Walk-in')}
+                </Text>
+              </TouchableOpacity>
+              {recentClients.map((c) => (
+                <TouchableOpacity
+                  key={c.id}
+                  activeOpacity={0.8}
+                  onPress={() => {
+                    setSelectedCustomerId(c.id);
+                    setCustomerSearch('');
+                    setIsSearchFocused(false);
+                  }}
+                  style={[styles.recentChip, { ...getGlass(colors.isDark).raised, borderWidth: 1 }]}
+                >
+                  <View style={[styles.recentAvatar, { backgroundColor: colors.accent800 }]}>
+                    <Text style={{ color: colors.accent100, fontSize: 10.5, fontWeight: '800' }}>{getInitials(c.name)}</Text>
+                  </View>
+                  <Text numberOfLines={1} style={{ color: colors.text, fontSize: 12.5, fontWeight: '600', maxWidth: 90 }}>
+                    {c.name.trim().split(' ')[0]}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </ScrollView>
+        )}
+
+        {isWalkIn && (
+          <Text style={{ color: colors.textDim, fontSize: 11.5, marginBottom: 8 }}>
+            {t('billWalkInNote', 'Walk-in bill: no client details are saved, so dues cannot be tracked.')}
+          </Text>
+        )}
+
         <View style={styles.customerRowContainer}>
           {/* Search Field Box */}
           <View
             style={[
               styles.customerSearchBox,
               {
-                backgroundColor: colors.surface,
+                ...getGlass(colors.isDark).card,
                 borderColor: isSearchFocused ? colors.accent : colors.divider,
                 flex: 1,
               },
@@ -896,89 +1083,41 @@ export const NewBillScreen = ({
           </View>
         )}
 
-        {/* SERVICES SECTION */}
-        {/* SERVICES SECTION */}
-        <Text style={[styles.sectionLabel, { color: colors.textDim, marginTop: 18 }]}>
-          {t('services')} ({totalSelectedCount} {t('selected', 'selected')})
-        </Text>
-
-        {/* CHOOSE SERVICES TRIGGER BOX */}
+        {/* SERVICES: tap a tile once for 1, twice for 2; hold to remove */}
         <TouchableOpacity
-          activeOpacity={0.8}
+          activeOpacity={0.7}
           onPress={() => setIsServicesExpanded((prev) => !prev)}
-          style={[
-            styles.chooseServicesBox,
-            {
-              backgroundColor: colors.surface,
-              borderColor: isServicesExpanded || selectedServiceIds.length > 0 ? colors.accent : colors.divider,
-            },
-          ]}
+          hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+          style={styles.servicesHeadRow}
         >
-          <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, gap: 10 }}>
-            <Text style={{ fontSize: 16 }}>✨</Text>
-            <View style={{ flex: 1 }}>
-              <Text style={[styles.chooseServicesTitle, { color: colors.text }]}>
-                {t('chooseServices', 'Choose Services')}
-              </Text>
-              <Text
-                style={[
-                  styles.chooseServicesSub,
-                  { color: selectedServiceIds.length > 0 ? colors.accent : colors.textDim },
-                ]}
-              >
-                {totalSelectedCount === 0
-                  ? 'Tap to select salon services'
-                  : `${totalSelectedCount} service${totalSelectedCount > 1 ? 's' : ''} selected`}
-              </Text>
-            </View>
-          </View>
-          <Text style={{ color: colors.accent, fontSize: 16, fontWeight: '700' }}>
-            {isServicesExpanded ? '▲' : '▼'}
+          <Text style={[styles.sectionLabel, { color: colors.textDim, marginBottom: 0 }]}>
+            {t('services')} ({totalSelectedCount} {t('selected', 'selected')})
           </Text>
+          <Text style={{ color: colors.accent, fontSize: 16, fontWeight: '700' }}>{isServicesExpanded ? '▲' : '▼'}</Text>
         </TouchableOpacity>
-
-        {/* Selected Services Preview Bar */}
-        {selectedServices.length > 0 && (
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginVertical: 8 }}>
-            {selectedServices.map((s) => {
-              const qty = serviceQuantities[s.id] || 1;
-              return (
-                <View
-                  key={`sel_${s.id}`}
-                  style={[
-                    styles.selectedServiceTag,
-                    { backgroundColor: colors.accent900, borderColor: colors.accent },
-                  ]}
-                >
-                  <Text style={{ color: colors.accent100, fontSize: 12, fontWeight: '600' }}>
-                    {s.name} × {qty}
-                  </Text>
-                  <Text style={{ color: colors.accent200, fontSize: 11, marginLeft: 6 }}>
-                    {inrFromMinor(s.price_minor * qty)}
-                  </Text>
-                  <TouchableOpacity
-                    onPress={() => handleDecrementOrRemoveService(s.id)}
-                    style={{ marginLeft: 6, padding: 2 }}
-                    hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-                  >
-                    <Text style={{ color: colors.accent200, fontSize: 12, fontWeight: 'bold' }}>✕</Text>
-                  </TouchableOpacity>
-                </View>
-              );
-            })}
-          </ScrollView>
+        {!isServicesExpanded && selectedServices.length > 0 && (
+          <Text style={{ color: colors.accent, fontSize: 12.5, marginBottom: 8 }} numberOfLines={2}>
+            {selectedServices
+              .map((sv) => ((serviceQuantities[sv.id] || 1) > 1 ? `${sv.name} × ${serviceQuantities[sv.id]}` : sv.name))
+              .join(' + ')}
+          </Text>
+        )}
+        {isServicesExpanded && (
+          <Text style={{ color: colors.textDim, fontSize: 11, marginBottom: 6 }}>
+            {t('serviceTapHint', 'Tap once for 1, twice for 2 · hold to remove')}
+          </Text>
         )}
 
         {/* 3-COLUMN SQUARE GRID CONTAINER (Shown when expanded) */}
         {isServicesExpanded && (
-          <View style={[styles.servicesGridContainer, { backgroundColor: colors.surface, borderColor: colors.divider }]}>
+          <View style={[styles.servicesGridContainer, { ...getGlass(colors.isDark).card, borderWidth: 1 }]}>
             {services.length === 0 ? (
               <View style={{ padding: 20, alignItems: 'center' }}>
                 <Text style={{ color: colors.textDim, fontSize: 13 }}>No services found. Add services in Prices & Offers.</Text>
               </View>
             ) : (
               <View style={styles.threeColumnGrid}>
-                {services.map((s) => {
+                {orderedServices.map((s) => {
                   const isSelected = selectedServiceIds.includes(s.id);
                   const qty = serviceQuantities[s.id] || 0;
                   return (
@@ -986,29 +1125,34 @@ export const NewBillScreen = ({
                       key={s.id}
                       activeOpacity={0.75}
                       onPress={() => handleServicePress(s.id)}
+                      onLongPress={() => isSelected && handleRemoveService(s.id)}
+                      delayLongPress={350}
+                      accessibilityState={{ selected: isSelected }}
                       style={[
                         styles.squareServiceCard,
                         {
-                          backgroundColor: isSelected ? colors.accent900 : colors.bg,
-                          borderColor: isSelected ? colors.accent : colors.divider,
+                          backgroundColor: isSelected ? colors.accent + '1F' : getGlass(colors.isDark).pill.backgroundColor,
+                          borderColor: isSelected ? colors.accent : getGlass(colors.isDark).card.borderColor,
+                          borderWidth: isSelected ? 1.5 : 1,
                         },
                       ]}
                     >
-                      <View
-                        style={[
-                          styles.cardCheckBadge,
-                          {
-                            backgroundColor: isSelected ? colors.accent : 'transparent',
-                            borderColor: isSelected ? colors.accent : colors.divider,
-                          },
-                        ]}
-                      >
-                        {isSelected && (
-                          <Text style={{ color: '#000', fontSize: 10, fontWeight: 'bold' }}>
-                            ×{qty}
-                          </Text>
-                        )}
-                      </View>
+                      {isSelected ? (
+                        <>
+                          <TouchableOpacity
+                            activeOpacity={0.7}
+                            hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                            onPress={() => handleServiceDecrement(s.id)}
+                            accessibilityLabel={`Reduce quantity of ${s.name}`}
+                            style={[styles.qtyMinus, { borderColor: colors.accent }]}
+                          >
+                            <Text style={{ color: colors.accent, fontSize: 13, fontWeight: '800', lineHeight: 15 }}>−</Text>
+                          </TouchableOpacity>
+                          <View style={[styles.qtyBadge, { backgroundColor: colors.accent }]}>
+                            <Text style={{ color: '#161826', fontSize: 10.5, fontWeight: '800' }}>×{qty}</Text>
+                          </View>
+                        </>
+                      ) : null}
                       <Text
                         style={[
                           styles.squareServiceName,
@@ -1016,7 +1160,7 @@ export const NewBillScreen = ({
                         ]}
                         numberOfLines={2}
                       >
-                        {s.name} {qty > 1 ? `× ${qty}` : ''}
+                        {s.name}
                       </Text>
                       <Text
                         style={[
@@ -1035,6 +1179,8 @@ export const NewBillScreen = ({
         )}
 
         {/* STYLIST SECTION */}
+        {!stylistLocked && (
+        <>
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 12 }}>
           <Text style={[styles.sectionLabel, { color: colors.textDim }]}>
             {t('staff')}
@@ -1123,7 +1269,28 @@ export const NewBillScreen = ({
             );
           })}
         </ScrollView>
+        </>
+        )}
 
+        </>
+        )}
+
+        {/* Discount and tip: tucked away in quick close, one tap to open */}
+        {isQuick && !showExtras ? (
+          <TouchableOpacity
+            activeOpacity={0.8}
+            onPress={() => setShowExtras(true)}
+            style={[styles.quickExtrasRow, { borderColor: colors.divider, backgroundColor: getGlass(colors.isDark).card.backgroundColor }]}
+          >
+            <Text style={{ color: colors.textDim, fontSize: 12.5, fontWeight: '600' }}>
+              {t('discount')} / Tip
+              {discountMinor > 0 ? `  ·  −${inrFromMinor(discountMinor)}` : ''}
+              {tipMinor > 0 ? `  ·  +${inrFromMinor(tipMinor)}` : ''}
+            </Text>
+            <Text style={{ color: colors.accent, fontSize: 12.5, fontWeight: '700' }}>＋</Text>
+          </TouchableOpacity>
+        ) : (
+        <>
         {/* DISCOUNT SECTION (Replaces GST as instructed) */}
         <Text style={[styles.sectionLabel, { color: colors.textDim, marginTop: 16 }]}>
           {t('discount')} (₹)
@@ -1205,7 +1372,7 @@ export const NewBillScreen = ({
             style={[
               styles.discountInputBox,
               {
-                backgroundColor: colors.surface,
+                ...getGlass(colors.isDark).card,
                 borderColor: tipMinor > 0 ? colors.accent : colors.divider,
               },
             ]}
@@ -1243,6 +1410,9 @@ export const NewBillScreen = ({
             ))}
           </ScrollView>
         </View>
+
+        </>
+        )}
 
         {/* PAYMENT METHOD */}
         <Text style={[styles.sectionLabel, { color: colors.textDim, marginTop: 18 }]}>
@@ -1315,7 +1485,7 @@ export const NewBillScreen = ({
 
         {/* PARTIAL PAY DETAILS */}
         {paymentMode === 'Partial Pay' && (
-          <View style={[styles.dueDetailCard, { backgroundColor: colors.surface, borderColor: colors.accent }]}>
+          <View style={[styles.dueDetailCard, { ...getGlass(colors.isDark).card, borderWidth: 1, borderColor: colors.accent }]}>
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
               <Text style={{ color: colors.text, fontSize: 13, fontWeight: '600' }}>
                 {t('amountPaidNow', 'Amount Paid Now')} (₹):
@@ -1476,7 +1646,8 @@ export const NewBillScreen = ({
               Math.round((parseFloat(partialPaidInput) || 0) * 100) < totalMinor);
 
           const isBillComplete = Boolean(
-            selectedCustomer &&
+            (selectedCustomer || isWalkIn) &&
+            !walkInNeedsClient &&
             cartItems.length > 0 &&
             selectedStaffIndices.length > 0 &&
             currentStaff &&
@@ -1486,7 +1657,7 @@ export const NewBillScreen = ({
 
           const btnLabel = editingBill
             ? 'Save Changes'
-            : !selectedCustomer
+            : !selectedCustomer && !isWalkIn
             ? 'Select Client'
             : cartItems.length === 0
             ? 'Select Services'
@@ -1494,6 +1665,8 @@ export const NewBillScreen = ({
             ? 'Select Stylist'
             : !paymentMode
             ? 'Select Payment Mode'
+            : walkInNeedsClient
+            ? t('billWalkInNeedsClient', 'Dues need a client name and phone')
             : paymentMode === 'Partial Pay' && !isPartialValid
             ? 'Enter Valid Paid Amount'
             : t('saveAndPrint');
@@ -1502,7 +1675,8 @@ export const NewBillScreen = ({
             <Button
               label={btnLabel}
               block
-              disabled={!isBillComplete}
+              disabled={!isBillComplete || isSavingBill}
+              loading={isSavingBill}
               onPress={handleProceed}
             />
           );
@@ -1608,6 +1782,21 @@ export const NewBillScreen = ({
                     <Text style={styles.saveModalBtnText}>{t('save')}</Text>
                   )}
                 </TouchableOpacity>
+
+                {!selectedCustomer && (
+                  <TouchableOpacity
+                    activeOpacity={0.8}
+                    onPress={() => {
+                      setIsWalkInBill(true);
+                      setIsAddClientModalOpen(false);
+                    }}
+                    style={{ marginTop: 14, alignItems: 'center' }}
+                  >
+                    <Text style={{ color: colors.accent, fontSize: 12.5, fontWeight: '600', textAlign: 'center' }}>
+                      {t('billWalkInSkip', "Customer didn't give details? Continue as walk-in")}
+                    </Text>
+                  </TouchableOpacity>
+                )}
               </View>
             </ScrollView>
           </View>
@@ -1750,7 +1939,17 @@ export const NewBillScreen = ({
                     key={item.dateStr}
                     activeOpacity={0.7}
                     onPress={() => {
-                      setSelectedBillDate(item.date);
+                      // Keep the current time of day; the picked date alone would be midnight (12 AM)
+                      const now = new Date();
+                      const picked = new Date(
+                        item.date.getFullYear(),
+                        item.date.getMonth(),
+                        item.date.getDate(),
+                        now.getHours(),
+                        now.getMinutes(),
+                        now.getSeconds()
+                      );
+                      setSelectedBillDate(picked);
                       setShowDatePickerModal(false);
                     }}
                     style={{
@@ -1797,6 +1996,25 @@ export const NewBillScreen = ({
 };
 
 const styles = StyleSheet.create({
+  quickCard: { borderRadius: 18, padding: 12, marginBottom: 10 },
+  quickRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  quickAvatar: { width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center' },
+  quickName: { fontSize: 15, fontWeight: '700' },
+  quickEditBtn: { paddingHorizontal: 12, paddingVertical: 5, borderRadius: 14, borderWidth: 1 },
+  quickDivider: { height: StyleSheet.hairlineWidth, marginVertical: 9 },
+  quickLine: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10, paddingVertical: 3 },
+  quickLineName: { flex: 1, fontSize: 13.5, fontWeight: '500' },
+  quickLinePrice: { fontSize: 13.5, fontWeight: '700' },
+  quickExtrasRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderWidth: 1,
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginTop: 4,
+  },
   safeArea: {
     flex: 1,
   },
@@ -1947,15 +2165,56 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   squareServiceCard: {
-    width: '31.3%',
-    aspectRatio: 1,
+    width: '31.5%',
     borderRadius: radii.md,
     borderWidth: 1,
-    padding: 8,
-    justifyContent: 'space-between',
+    paddingHorizontal: 6,
+    paddingTop: 8,
+    paddingBottom: 6,
+    justifyContent: 'center',
     alignItems: 'center',
     position: 'relative',
+    minHeight: 58,
   },
+  qtyBadge: {
+    position: 'absolute',
+    top: 4,
+    right: 4,
+    minWidth: 22,
+    height: 16,
+    paddingHorizontal: 4,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  qtyMinus: {
+    position: 'absolute',
+    top: 4,
+    left: 4,
+    width: 18,
+    height: 16,
+    borderRadius: 8,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  servicesHeadRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 14,
+    marginBottom: 6,
+  },
+  recentChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 5,
+    paddingLeft: 5,
+    paddingRight: 11,
+    borderRadius: 18,
+  },
+  recentAvatar: { width: 24, height: 24, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
   cardCheckBadge: {
     position: 'absolute',
     top: 5,
@@ -1968,7 +2227,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   squareServiceName: {
-    fontSize: 12,
+    fontSize: 11.5,
     fontWeight: '600',
     textAlign: 'center',
     marginTop: 14,
@@ -2095,7 +2354,7 @@ const styles = StyleSheet.create({
   },
   partialInput: {
     width: 100,
-    height: 38,
+    minHeight: 38,
     borderWidth: 1,
     borderRadius: radii.sm,
     paddingHorizontal: 10,

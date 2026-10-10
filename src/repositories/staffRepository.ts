@@ -1,8 +1,17 @@
 import { supabase } from '../lib/supabase';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { assertSaved, isRemoteShop } from '../utils/persist';
+import { isValidUuid } from '../utils/uuid';
+import { authRepository } from './authRepository';
+
+export const INVITE_SHOP_KEY = '@salon_os_invite_shop_id';
+
+const isPermissionDenied = (error: { code?: string; message?: string } | null): boolean =>
+  !!error && (error.code === '42501' || /row-level security/i.test(error.message || ''));
 import { StaffMember, StylistPermissions, DEFAULT_STYLIST_PERMISSIONS } from '../types/domain';
 
 const STORAGE_KEY_STAFF = '@salon_os_staff_cache';
+const DEFAULT_STYLIST_LIMIT = 3;
 
 export class StaffRepository {
   /**
@@ -50,9 +59,9 @@ export class StaffRepository {
             target_amount_minor: 500000,
             revenue_minor: stats.rev,
             service_count: stats.count,
-            rebook_rate: stats.count > 0 ? '65%' : '0%',
+            rebook_rate: '', // worked out from bills where it is shown, never invented
             rating: s.rating != null ? String(s.rating) : '5.0',
-            chair_utilization: stats.count > 0 ? '70%' : '0%',
+            chair_utilization: '',
           };
         });
 
@@ -68,8 +77,27 @@ export class StaffRepository {
   }
 
   /**
+   * Max active stylists for a shop (owner does not count). Defaults to 3;
+   * support raises it via shops.max_stylists.
+   */
+  async getStylistLimit(shopId: string): Promise<number> {
+    try {
+      const { data, error } = await supabase
+        .from('shops')
+        .select('max_stylists')
+        .eq('id', shopId)
+        .maybeSingle();
+      const value = (data as { max_stylists?: number } | null)?.max_stylists;
+      if (!error && typeof value === 'number' && value >= 0) return value;
+    } catch {
+      // fall through to default
+    }
+    return DEFAULT_STYLIST_LIMIT;
+  }
+
+  /**
    * Add a real staff member and persist to Supabase
-   * Strictly enforces maximum 3 stylists per account (owner does not count).
+   * Enforces the per-shop stylist limit (owner does not count).
    */
   async addStaff(
     shopId: string,
@@ -88,11 +116,11 @@ export class StaffRepository {
       throw new Error('PHONE_REQUIRED: Valid 10-digit mobile number is required.');
     }
 
-    // Check 3 stylist limit
-    const currentList = await this.getStaff(shopId);
+    // Client-side pre-check; the database trigger is the real enforcement.
+    const [currentList, limit] = await Promise.all([this.getStaff(shopId), this.getStylistLimit(shopId)]);
     const activeStaff = currentList.filter((s) => s.is_active);
-    if (activeStaff.length >= 3) {
-      throw new Error('STYLIST_LIMIT_REACHED: Maximum 3 stylists allowed per account.');
+    if (activeStaff.length >= limit) {
+      throw new Error(`STYLIST_LIMIT_REACHED: Maximum ${limit} stylists allowed per account.`);
     }
 
     const newStaff: StaffMember = {
@@ -113,8 +141,8 @@ export class StaffRepository {
       chair_utilization: '0%',
     };
 
-    try {
-      const { data, error } = await supabase
+    const insertRow = () =>
+      supabase
         .from('staff')
         .insert({
           shop_id: shopId,
@@ -122,24 +150,32 @@ export class StaffRepository {
           role: role || 'Stylist',
           phone: cleanPhone,
           is_active: true,
+          permissions: DEFAULT_STYLIST_PERMISSIONS,
         } as any)
         .select()
         .single();
 
-      if (error) {
-        console.error('Supabase staff insert error:', error);
-      } else if (data) {
-        newStaff.id = data.id;
-        // Optionally persist permissions if column has been migrated
-        supabase
-          .from('staff')
-          .update({ permissions: DEFAULT_STYLIST_PERMISSIONS } as any)
-          .eq('id', data.id)
-          .then(() => {}, () => {});
+    let { data, error } = await insertRow();
+
+    // Refused for lack of a signed-in owner: reconnect once and try again
+    if (error && isPermissionDenied(error)) {
+      if (await authRepository.ensureSupabaseSession()) {
+        ({ data, error } = await insertRow());
       }
-    } catch (e) {
-      console.warn('Supabase staff save offline:', e);
+      if (error && isPermissionDenied(error)) {
+        throw new Error(
+          'Your login has expired, so the stylist could not be saved. Please log out, log in again with your OTP, and try again.'
+        );
+      }
     }
+
+    if (error || !data) {
+      if ((error?.message || '').includes('STYLIST_LIMIT_REACHED')) {
+        throw new Error('STYLIST_LIMIT_REACHED: Stylist limit reached. Contact StyleFleet support to add more.');
+      }
+      throw new Error(error?.message || 'Could not save stylist. Please try again.');
+    }
+    newStaff.id = data.id;
 
     const current = (await this.getCachedStaff(shopId)) || [];
     const updated = [...current, newStaff];
@@ -172,8 +208,8 @@ export class StaffRepository {
       rating: newRating,
     };
 
-    try {
-      await supabase
+    if (isRemoteShop(shopId) && isValidUuid(staffId)) {
+      const result = await supabase
         .from('staff')
         .update({
           name: newName,
@@ -182,9 +218,12 @@ export class StaffRepository {
           rating: newRating,
         } as any)
         .eq('id', staffId)
-        .eq('shop_id', shopId);
-    } catch (e) {
-      console.warn('updateStaff offline fallback:', e);
+        .eq('shop_id', shopId)
+        .select('id');
+      assertSaved(result, 'the stylist');
+      if (!result.data || result.data.length === 0) {
+        throw new Error('This stylist was not found on the server, so the changes were not saved.');
+      }
     }
 
     const updatedList = list.map((s) => (s.id === staffId ? updated : s));
@@ -211,14 +250,17 @@ export class StaffRepository {
       rating: formattedRating,
     };
 
-    try {
-      await supabase
+    if (isRemoteShop(shopId) && isValidUuid(staffId)) {
+      const result = await supabase
         .from('staff')
         .update({ rating: formattedRating } as any)
         .eq('id', staffId)
-        .eq('shop_id', shopId);
-    } catch (e) {
-      console.warn('updateStaffRating offline fallback:', e);
+        .eq('shop_id', shopId)
+        .select('id');
+      assertSaved(result, 'the rating');
+      if (!result.data || result.data.length === 0) {
+        throw new Error('This stylist was not found on the server, so the rating was not saved.');
+      }
     }
 
     const updatedList = list.map((s) => (s.id === staffId ? updated : s));
@@ -230,14 +272,10 @@ export class StaffRepository {
    * Delete / remove a staff member
    */
   async deleteStaff(shopId: string, staffId: string): Promise<boolean> {
-    try {
-      await supabase
-        .from('staff')
-        .delete()
-        .eq('id', staffId)
-        .eq('shop_id', shopId);
-    } catch (e) {
-      console.warn('deleteStaff offline fallback:', e);
+    if (isRemoteShop(shopId) && isValidUuid(staffId)) {
+      await authRepository.ensureSupabaseSession();
+      const result = await supabase.from('staff').delete().eq('id', staffId).eq('shop_id', shopId);
+      assertSaved(result, 'the removal');
     }
 
     const list = (await this.getCachedStaff(shopId)) || [];
@@ -255,17 +293,24 @@ export class StaffRepository {
     if (!target) return false;
 
     const nextState = !target.is_active;
-    target.is_active = nextState;
 
-    try {
-      await supabase
+    // Save first. The phone's copy changes only once the database has it.
+    if (isRemoteShop(shopId) && isValidUuid(staffId)) {
+      const result = await supabase
         .from('staff')
         .update({ is_active: nextState } as any)
-        .eq('id', staffId);
-    } catch {
-      // ignore
+        .eq('id', staffId)
+        .select('id');
+      if (result.error?.message?.includes('STYLIST_LIMIT_REACHED')) {
+        throw new Error('STYLIST_LIMIT_REACHED: Stylist limit reached. Contact StyleFleet support to add more.');
+      }
+      assertSaved(result, 'the stylist status');
+      if (!result.data || result.data.length === 0) {
+        throw new Error('This stylist was not found on the server, so the status was not saved.');
+      }
     }
 
+    target.is_active = nextState;
     await this.cacheStaff(shopId, list);
     return nextState;
   }
@@ -273,21 +318,26 @@ export class StaffRepository {
   /**
    * Find an active stylist by their 10-digit mobile number
    */
-  async getStylistByPhone(phone: string): Promise<StaffMember | null> {
+  async getStylistByPhone(phone: string, preferredShopId?: string | null): Promise<StaffMember | null> {
     const cleanPhone = phone.replace(/\D/g, '').slice(-10);
     if (!cleanPhone || cleanPhone.length !== 10) return null;
 
     try {
-      const selectBuilder = supabase.from('staff').select('*');
-      const filteredBuilder =
-        typeof (selectBuilder as any).or === 'function'
-          ? (selectBuilder as any).or(`phone.ilike.%${cleanPhone}%,phone.eq.${cleanPhone}`)
-          : selectBuilder.eq('phone', cleanPhone);
+      // The same number can be a stylist in more than one salon. The salon in the invite link wins.
+      const invitedShop = preferredShopId ?? (await AsyncStorage.getItem(INVITE_SHOP_KEY).catch(() => null));
 
-      const { data, error } = await filteredBuilder
-        .eq('is_active', true)
-        .limit(1)
-        .maybeSingle();
+      const findMatch = (shopFilter: string | null) => {
+        const selectBuilder = supabase.from('staff').select('*');
+        const filteredBuilder =
+          typeof (selectBuilder as any).or === 'function'
+            ? (selectBuilder as any).or(`phone.ilike.%${cleanPhone}%,phone.eq.${cleanPhone}`)
+            : selectBuilder.eq('phone', cleanPhone);
+        const active = filteredBuilder.eq('is_active', true);
+        return (shopFilter ? active.eq('shop_id', shopFilter) : active).limit(1).maybeSingle();
+      };
+
+      let { data, error } = invitedShop && isValidUuid(invitedShop) ? await findMatch(invitedShop) : { data: null, error: null };
+      if (error || !data) ({ data, error } = await findMatch(null));
 
       if (!error && data) {
         return {
@@ -303,9 +353,9 @@ export class StaffRepository {
           target_amount_minor: data.target_amount_minor || 500000,
           revenue_minor: 0,
           service_count: 0,
-          rebook_rate: '65%',
+          rebook_rate: '',
           rating: '5.0',
-          chair_utilization: '70%',
+          chair_utilization: '',
         };
       }
     } catch (e) {
@@ -404,21 +454,21 @@ export class StaffRepository {
     staffId: string,
     permissions: StylistPermissions
   ): Promise<void> {
-    try {
-      const { error } = await supabase
-        .from('staff')
-        .update({
-          permissions,
-          updated_at: new Date().toISOString(),
-        } as any)
-        .eq('id', staffId)
-        .eq('shop_id', shopId);
+    const { data, error } = await supabase
+      .from('staff')
+      .update({
+        permissions,
+        updated_at: new Date().toISOString(),
+      } as any)
+      .eq('id', staffId)
+      .eq('shop_id', shopId)
+      .select('id');
 
-      if (error) {
-        console.warn('updateStaffPermissions Supabase warning:', error.message);
-      }
-    } catch (e) {
-      console.warn('updateStaffPermissions fallback error:', e);
+    if (error) {
+      throw new Error(error.message || 'Could not update permissions.');
+    }
+    if (!data || data.length === 0) {
+      throw new Error('Could not update permissions. Only the salon owner can change stylist access.');
     }
 
     const list = (await this.getCachedStaff(shopId)) || [];

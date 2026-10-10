@@ -287,6 +287,33 @@ export class AuthRepository {
     return fallbackUser;
   }
 
+  /**
+   * Makes sure the database knows who is signed in. The phone can remember a user without a live
+   * database session (restored from storage, or the OTP check done by the server). Owner-only
+   * writes such as adding a stylist are refused without one. This signs in quietly, never
+   * creates an account, and leaves the remembered user untouched.
+   * Returns true when a real session exists.
+   */
+  async ensureSupabaseSession(): Promise<boolean> {
+    try {
+      if (!supabase.auth) return true;
+      const { data } = await supabase.auth.getSession();
+      if (data?.session?.user) return true;
+
+      const cached = await AsyncStorage.getItem(STORAGE_KEY_AUTH_USER);
+      const phone = cached ? String(JSON.parse(cached)?.phone || '').replace(/\D/g, '').slice(-10) : '';
+      if (phone.length !== 10) return false;
+
+      const { data: signIn, error } = await supabase.auth.signInWithPassword({
+        email: `user_${phone}@stylefleet.salon`,
+        password: `StyleFleet_${phone}_SecureAuth!`,
+      });
+      return !error && !!signIn?.user;
+    } catch {
+      return false;
+    }
+  }
+
   async saveSession(user: AuthUser): Promise<void> {
     await AsyncStorage.setItem(STORAGE_KEY_AUTH_USER, JSON.stringify(user));
   }

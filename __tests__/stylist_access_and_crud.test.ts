@@ -16,7 +16,8 @@ jest.mock('../src/lib/supabase', () => ({
 }));
 
 describe('Stylist Access, Permissions & CRUD QA Suite', () => {
-  const shopId = 'test-shop-uuid-123';
+  const shopId = '00000000-0000-4000-8000-0000000000b1';
+  const expenseId = '00000000-0000-4000-8000-0000000000e1';
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -94,6 +95,7 @@ describe('Stylist Access, Permissions & CRUD QA Suite', () => {
       (supabase.from as jest.Mock).mockReturnValue({
         update: mockUpdate,
         eq: mockEq,
+        select: jest.fn().mockResolvedValue({ data: [{ id: 'stylist-uuid-1' }], error: null }),
       });
 
       const updatedPerms: StylistPermissions = {
@@ -105,6 +107,8 @@ describe('Stylist Access, Permissions & CRUD QA Suite', () => {
         team: false,
         reminders: true,
         profile: false,
+        expensesHistory: false,
+        shareBills: false,
       };
 
       await staffRepository.updateStaffPermissions(shopId, 'stylist-uuid-1', updatedPerms);
@@ -156,7 +160,7 @@ describe('Stylist Access, Permissions & CRUD QA Suite', () => {
       // Mock cached expense exists
       jest.spyOn(expenseRepository as any, 'getCachedExpenses').mockResolvedValueOnce([
         {
-          id: 'exp-1',
+          id: expenseId,
           shop_id: shopId,
           category_name: 'Rent',
           note: 'Old note',
@@ -168,16 +172,12 @@ describe('Stylist Access, Permissions & CRUD QA Suite', () => {
       (supabase.from as jest.Mock).mockReturnValue({
         update: jest.fn().mockReturnThis(),
         eq: jest.fn().mockReturnThis(),
-      });
-      // Second eq returns error
-      const fromObj = (supabase.from as jest.Mock)();
-      fromObj.eq.mockReturnValueOnce(fromObj).mockResolvedValueOnce({
-        error: { message: 'Update permission denied' },
+        select: jest.fn().mockResolvedValue({ data: null, error: { message: 'Update permission denied' } }),
       });
 
       await expect(
-        expenseRepository.updateExpense(shopId, 'exp-1', { note: 'New note' })
-      ).rejects.toThrow('Update permission denied');
+        expenseRepository.updateExpense(shopId, expenseId, { note: 'New note' })
+      ).rejects.toThrow(/permission/i);
     });
 
     test('deleteExpense throws when Supabase returns an error', async () => {
@@ -191,7 +191,7 @@ describe('Stylist Access, Permissions & CRUD QA Suite', () => {
       });
 
       await expect(
-        expenseRepository.deleteExpense(shopId, 'exp-1')
+        expenseRepository.deleteExpense(shopId, expenseId)
       ).rejects.toThrow('Delete constraint failed');
     });
   });
@@ -226,6 +226,8 @@ describe('Stylist Access, Permissions & CRUD QA Suite', () => {
         team: false,     // Restricted
         reminders: true,
         profile: false,  // Restricted
+        expensesHistory: false,
+        shareBills: false,
       };
 
       const checkAccess = (perm: keyof StylistPermissions): boolean => {

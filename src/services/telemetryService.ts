@@ -182,7 +182,7 @@ class TelemetryService {
       latency_ms: latencyMs,
       error_count: dbStatus === 'healthy' ? 0 : 1,
       details: {
-        endpoint: process.env.EXPO_PUBLIC_SUPABASE_URL || 'https://scgokpcoyfewrtrwqxpu.supabase.co',
+        endpoint: process.env.EXPO_PUBLIC_SUPABASE_URL || 'https://nqwgxkdpwpgqkezaqsrx.supabase.co',
         responseTimeMs: latencyMs,
       },
       timestamp: new Date().toISOString(),

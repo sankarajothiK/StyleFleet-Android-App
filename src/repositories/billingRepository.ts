@@ -4,6 +4,8 @@ import { Bill, BillItem, Period } from '../types/domain';
 import { subscriptionRepository } from './subscriptionRepository';
 import { shopRepository } from './shopRepository';
 import { generateUuid, isValidUuid } from '../utils/uuid';
+import { assertSaved, isRemoteShop } from '../utils/persist';
+import { resolveFreeSalesLimit } from '../utils/subscriptionUtils';
 
 export { isValidUuid };
 
@@ -339,6 +341,15 @@ export class BillingRepository {
     }
   }
 
+  /** Remove a bill whose items, payment or dues could not be saved (items and payments go with it). */
+  private async discardBill(billId: string): Promise<void> {
+    try {
+      await supabase.from('bills').delete().eq('id', billId);
+    } catch (e) {
+      console.warn('Could not remove the unfinished bill', billId, e);
+    }
+  }
+
   /**
    * Create a new real bill in Supabase
    */
@@ -357,16 +368,25 @@ export class BillingRepository {
     staffIds?: string[],
     billDate?: string | Date
   ): Promise<Bill> {
-    // 100-sales free limit check (counts active + deleted bills)
+    // Free-sales limit check (counts active + deleted bills); a salon may have its own limit
     const totalSalesCreated = await this.getTotalSalesCreatedCount(shopId);
+    let freeSalesLimit = resolveFreeSalesLimit(null);
+    try {
+      const { data: limitRow } = await supabase
+        .from('shops')
+        .select('free_sales_limit')
+        .eq('id', shopId)
+        .maybeSingle();
+      freeSalesLimit = resolveFreeSalesLimit(limitRow?.free_sales_limit);
+    } catch {}
     let isPro = false;
     try {
       const subInfo = await subscriptionRepository.getSubscriptionInfo(shopId);
       isPro = subInfo.type === 'subscription' && !subInfo.subscription?.isExpired;
     } catch {}
 
-    if (totalSalesCreated >= 100 && !isPro) {
-      throw new Error('SALES_LIMIT_REACHED: Free limit of 100 sales reached. Please upgrade to Pro.');
+    if (totalSalesCreated >= freeSalesLimit && !isPro) {
+      throw new Error(`SALES_LIMIT_REACHED: Free limit of ${freeSalesLimit} sales reached. Please upgrade to Pro.`);
     }
 
     const subtotalMinor = items.reduce((acc, it) => acc + it.priceMinor, 0);
@@ -464,116 +484,93 @@ export class BillingRepository {
       ] : [],
     };
 
-    try {
-      let billData: any = null;
-      let billErr: any = null;
+    if (isRemoteShop(shopId)) {
+      const billRow: Record<string, unknown> = {
+        shop_id: shopId,
+        customer_id: safeCustomerId,
+        staff_id: safeStaffId,
+        invoice_number: invoiceNumber,
+        subtotal_minor: subtotalMinor,
+        discount_minor: discountMinor,
+        tax_minor: taxMinor,
+        tip_minor: safeTipMinor,
+        total_minor: totalMinor,
+        status,
+        notes,
+        created_at: billDateTime.toISOString(),
+        reminder_status: 'Not Sent',
+        confirmation_status: 'Pending',
+      };
 
-      const firstAttempt = await supabase
-        .from('bills')
-        .insert({
-          shop_id: shopId,
-          customer_id: safeCustomerId,
-          staff_id: safeStaffId,
-          invoice_number: invoiceNumber,
-          subtotal_minor: subtotalMinor,
-          discount_minor: discountMinor,
-          tax_minor: taxMinor,
-          tip_minor: safeTipMinor,
-          total_minor: totalMinor,
-          status,
-          notes,
-          created_at: billDateTime.toISOString(),
-          reminder_status: 'Not Sent',
-          confirmation_status: 'Pending',
-        } as any)
-        .select()
-        .single();
-
-      if (firstAttempt.error && (firstAttempt.error.code === 'PGRST204' || firstAttempt.error.message?.includes('tip_minor') || firstAttempt.error.message?.includes('reminder_status'))) {
-        // Fallback if tip_minor or reminder columns are not yet migrated in Supabase
-        const retryAttempt = await supabase
-          .from('bills')
-          .insert({
-            shop_id: shopId,
-            customer_id: safeCustomerId,
-            staff_id: safeStaffId,
-            invoice_number: invoiceNumber,
-            subtotal_minor: subtotalMinor,
-            discount_minor: discountMinor,
-            tax_minor: taxMinor,
-            total_minor: totalMinor,
-            status,
-            notes,
-            created_at: billDateTime.toISOString(),
-          } as any)
-          .select()
-          .single();
-        billData = retryAttempt.data;
-        billErr = retryAttempt.error;
-      } else {
-        billData = firstAttempt.data;
-        billErr = firstAttempt.error;
+      let saved = await supabase.from('bills').insert(billRow as any).select().single();
+      if (
+        saved.error &&
+        (saved.error.code === 'PGRST204' ||
+          saved.error.message?.includes('tip_minor') ||
+          saved.error.message?.includes('reminder_status'))
+      ) {
+        // Database not yet migrated with the tip / reminder columns: save without them
+        const { tip_minor: _tip, reminder_status: _reminder, confirmation_status: _confirmation, ...legacyRow } = billRow;
+        saved = await supabase.from('bills').insert(legacyRow as any).select().single();
       }
+      assertSaved(saved, 'the bill');
+      if (!saved.data) throw new Error('The bill could not be saved. Please try again.');
 
-      if (!billErr && billData) {
-        newBill.id = billData.id;
+      const savedBillId: string = saved.data.id;
+      newBill.id = savedBillId;
 
-        // Insert bill items with exact quantity and unit price
-        const itemInserts = items.map((it) => {
+      try {
+        const itemRows = items.map((it) => {
           const qty = (it as any).quantity || 1;
           const unitPrice = (it as any).unitPriceMinor || Math.round(it.priceMinor / qty);
           return {
-            bill_id: billData.id,
+            bill_id: savedBillId,
             service_name_snapshot: it.name,
             quantity: qty,
             unit_price_minor: unitPrice,
             line_total_minor: it.priceMinor,
-            staff_id: staffId || null,
+            // Same check as the bill's own stylist: one invalid id must not make the whole items insert fail
+            staff_id: safeStaffId,
           };
         });
-        const batchOps: PromiseLike<any>[] = [
-          supabase.from('bill_items').insert(itemInserts as any),
-        ];
 
-        // Insert payment with correct schema if any amount was paid upfront
-        if (finalPaidMinor > 0) {
-          batchOps.push(
-            supabase.from('payments').insert({
-              bill_id: billData.id,
-              shop_id: shopId,
-              amount_minor: finalPaidMinor,
-              method: resolvedPaymentMethod,
-              status: 'completed',
-              reference: paymentMethod.startsWith('Partial Pay') ? `Partial upfront payment (${resolvedPaymentMethod})` : 'Salon billing invoice payment',
-              paid_at: billDateTime.toISOString(),
-            } as any)
-          );
+        const [itemsResult, paymentResult] = await Promise.all([
+          supabase.from('bill_items').insert(itemRows as any),
+          finalPaidMinor > 0
+            ? supabase.from('payments').insert({
+                bill_id: savedBillId,
+                shop_id: shopId,
+                amount_minor: finalPaidMinor,
+                method: resolvedPaymentMethod,
+                status: 'completed',
+                reference: paymentMethod.startsWith('Partial Pay')
+                  ? `Partial upfront payment (${resolvedPaymentMethod})`
+                  : 'Salon billing invoice payment',
+                paid_at: billDateTime.toISOString(),
+              } as any)
+            : Promise.resolve({ error: null }),
+        ]);
+        assertSaved(itemsResult, 'the bill items');
+        assertSaved(paymentResult, 'the payment');
+
+        // Last, so a failure above never leaves the customer's dues changed for a bill that was not kept
+        if (finalDueMinor > 0 && safeCustomerId) {
+          const { data: custRow, error: custReadError } = await supabase
+            .from('customers')
+            .select('outstanding_due_minor')
+            .eq('id', safeCustomerId)
+            .maybeSingle();
+          assertSaved({ error: custReadError }, "the customer's dues");
+          const dueUpdate = await supabase
+            .from('customers')
+            .update({ outstanding_due_minor: (custRow?.outstanding_due_minor || 0) + finalDueMinor })
+            .eq('id', safeCustomerId);
+          assertSaved(dueUpdate, "the customer's dues");
         }
-
-        // Update customer's outstanding_due_minor in Supabase if there is a due
-        if (finalDueMinor > 0 && customerId) {
-          batchOps.push(
-            (async () => {
-              const { data: custRow } = await supabase
-                .from('customers')
-                .select('outstanding_due_minor')
-                .eq('id', customerId)
-                .single();
-              const currentCustDue = (custRow?.outstanding_due_minor || 0);
-              return supabase
-                .from('customers')
-                .update({ outstanding_due_minor: currentCustDue + finalDueMinor })
-                .eq('id', customerId);
-            })()
-          );
-        }
-
-        await Promise.all(batchOps);
-      } else if (billErr) {
-        console.error('Supabase bill insert error:', billErr);
+      } catch (e) {
+        await this.discardBill(savedBillId);
+        throw e;
       }
-    } catch (e) {
-      console.warn('BillingRepository: Supabase bill save offline:', e);
     }
 
     const current = (await this.getCachedBills(shopId)) || [];
@@ -601,18 +598,19 @@ export class BillingRepository {
     const nowIso = new Date().toISOString();
     const who = deletedBy || 'Owner';
     const role = deletedByRole || 'owner';
-    try {
-      const { data: current } = await supabase
+    if (isRemoteShop(shopId) && isValidUuid(billId)) {
+      const { data: current, error: readError } = await supabase
         .from('bills')
         .select('notes')
         .eq('id', billId)
         .eq('shop_id', shopId)
-        .single();
+        .maybeSingle();
+      assertSaved({ error: readError }, 'the deletion');
 
       const existingNotes = current?.notes || '';
       const updatedNotes = `deleted_by:${who};deleted_by_role:${role};deleted_at:${nowIso};${existingNotes}`;
 
-      const { error } = await supabase
+      const result = await supabase
         .from('bills')
         .update({
           status: 'deleted',
@@ -621,12 +619,7 @@ export class BillingRepository {
         })
         .eq('id', billId)
         .eq('shop_id', shopId);
-
-      if (error) {
-        console.error('Supabase deleteBill error:', error);
-      }
-    } catch (e) {
-      console.warn('deleteBill offline fallback:', e);
+      assertSaved(result, 'the deletion');
     }
 
     const cached = (await this.getCachedBills(shopId)) || [];
@@ -651,20 +644,22 @@ export class BillingRepository {
    */
   async restoreBill(shopId: string, billId: string): Promise<boolean> {
     const nowIso = new Date().toISOString();
-    try {
-      const { data: current } = await supabase
+    if (isRemoteShop(shopId) && isValidUuid(billId)) {
+      const { data: current, error: readError } = await supabase
         .from('bills')
         .select('notes, total_minor')
         .eq('id', billId)
         .eq('shop_id', shopId)
-        .single();
+        .maybeSingle();
+      assertSaved({ error: readError }, 'the restore');
+      if (!current) throw new Error('This bill was not found on the server, so it could not be restored.');
 
-      const existingNotes = (current?.notes || '')
+      const existingNotes = (current.notes || '')
         .replace(/deleted_by:[^;]+;?/, '')
         .replace(/deleted_by_role:[^;]+;?/, '')
         .replace(/deleted_at:[^;]+;?/, '');
 
-      const { error } = await supabase
+      const result = await supabase
         .from('bills')
         .update({
           status: 'paid',
@@ -673,12 +668,7 @@ export class BillingRepository {
         })
         .eq('id', billId)
         .eq('shop_id', shopId);
-
-      if (error) {
-        console.error('Supabase restoreBill error:', error);
-      }
-    } catch (e) {
-      console.warn('restoreBill offline fallback:', e);
+      assertSaved(result, 'the restore');
     }
 
     const cached = (await this.getCachedBills(shopId)) || [];
@@ -802,42 +792,13 @@ export class BillingRepository {
     const safeUpdateCustId = isValidUuid(customerId) ? customerId : null;
     const safeUpdateStaffId = isValidUuid(staffId) ? staffId : null;
 
-    try {
-      const firstUpdate = await supabase
-        .from('bills')
-        .update({
-          customer_id: safeUpdateCustId,
-          staff_id: safeUpdateStaffId,
-          subtotal_minor: subtotalMinor,
-          discount_minor: discountMinor,
-          tip_minor: tipMinor,
-          total_minor: totalMinor,
-          status,
-          notes: updatedNotes,
-          updated_at: new Date().toISOString(),
-        } as any)
-        .eq('id', effectiveBillId)
-        .eq('shop_id', shopId);
-
-      if (firstUpdate.error && (firstUpdate.error.code === 'PGRST204' || firstUpdate.error.message?.includes('tip_minor'))) {
-        await supabase
-          .from('bills')
-          .update({
-            customer_id: safeUpdateCustId,
-            staff_id: safeUpdateStaffId,
-            subtotal_minor: subtotalMinor,
-            discount_minor: discountMinor,
-            total_minor: totalMinor,
-            status,
-            notes: updatedNotes,
-            updated_at: new Date().toISOString(),
-          } as any)
-          .eq('id', effectiveBillId)
-          .eq('shop_id', shopId);
-      }
-
+    if (isRemoteShop(shopId) && isValidUuid(effectiveBillId)) {
+      // 1. Line items: add the new rows first and drop the old ones only once the new ones are safely in
       if (updates.items && updates.items.length > 0) {
-        await supabase.from('bill_items').delete().eq('bill_id', effectiveBillId);
+        const oldRows = await supabase.from('bill_items').select('id').eq('bill_id', effectiveBillId);
+        assertSaved(oldRows, 'the bill items');
+        const oldIds = (oldRows.data || []).map((r: { id: string }) => r.id);
+
         const itemRows = updates.items.map((it) => {
           const qty = (it as any).quantity || 1;
           const unitPrice = (it as any).unitPriceMinor || Math.round(it.priceMinor / qty);
@@ -847,90 +808,128 @@ export class BillingRepository {
             quantity: qty,
             unit_price_minor: unitPrice,
             line_total_minor: it.priceMinor,
-            staff_id: staffId || null,
+            staff_id: safeUpdateStaffId,
           };
         });
-        await supabase.from('bill_items').insert(itemRows);
+        const inserted = await supabase.from('bill_items').insert(itemRows as any).select('id');
+        assertSaved(inserted, 'the bill items');
+        const newIds = (inserted.data || []).map((r: { id: string }) => r.id);
+
+        if (oldIds.length > 0) {
+          const removed = await supabase.from('bill_items').delete().in('id', oldIds);
+          if (removed.error) {
+            // keep exactly one set of items, then report the failure
+            if (newIds.length > 0) await supabase.from('bill_items').delete().in('id', newIds);
+            assertSaved(removed, 'the bill items');
+          }
+        }
       }
 
-      // Synchronize payments table in Supabase
+      // 2. Bill header
+      const headerFields = {
+        customer_id: safeUpdateCustId,
+        staff_id: safeUpdateStaffId,
+        subtotal_minor: subtotalMinor,
+        discount_minor: discountMinor,
+        total_minor: totalMinor,
+        status,
+        notes: updatedNotes,
+        updated_at: new Date().toISOString(),
+      };
+      let header = await supabase
+        .from('bills')
+        .update({ ...headerFields, tip_minor: tipMinor } as any)
+        .eq('id', effectiveBillId)
+        .eq('shop_id', shopId)
+        .select('id');
+      if (header.error && (header.error.code === 'PGRST204' || header.error.message?.includes('tip_minor'))) {
+        // Database not yet migrated with the tip column
+        header = await supabase
+          .from('bills')
+          .update(headerFields as any)
+          .eq('id', effectiveBillId)
+          .eq('shop_id', shopId)
+          .select('id');
+      }
+      assertSaved(header, 'the bill');
+      if (!header.data || header.data.length === 0) {
+        throw new Error('This bill was not found on the server, so the changes were not saved.');
+      }
+
+      // 3. Payment
       if (paidAmountMinor > 0) {
-        const { data: existingPayments } = await supabase
+        const existing = await supabase
           .from('payments')
           .select('id, amount_minor')
           .eq('bill_id', effectiveBillId)
           .eq('shop_id', shopId);
+        assertSaved(existing, 'the payment');
+        const paymentRows = existing.data || [];
 
-        if (existingPayments && existingPayments.length > 0) {
-          await supabase
-            .from('payments')
-            .update({
+        if (paymentRows.length > 0) {
+          assertSaved(
+            await supabase
+              .from('payments')
+              .update({ amount_minor: paidAmountMinor, method: paymentMethod, status: 'completed' })
+              .eq('id', paymentRows[0].id),
+            'the payment'
+          );
+          if (paymentRows.length > 1) {
+            assertSaved(
+              await supabase.from('payments').delete().in('id', paymentRows.slice(1).map((p: { id: string }) => p.id)),
+              'the payment'
+            );
+          }
+        } else {
+          assertSaved(
+            await supabase.from('payments').insert({
+              bill_id: effectiveBillId,
+              shop_id: shopId,
               amount_minor: paidAmountMinor,
               method: paymentMethod,
               status: 'completed',
-            })
-            .eq('id', existingPayments[0].id);
-
-          if (existingPayments.length > 1) {
-            const extraIds = existingPayments.slice(1).map((p) => p.id);
-            await supabase.from('payments').delete().in('id', extraIds);
-          }
-        } else {
-          await supabase.from('payments').insert({
-            bill_id: effectiveBillId,
-            shop_id: shopId,
-            amount_minor: paidAmountMinor,
-            method: paymentMethod,
-            status: 'completed',
-            reference: paymentMethod.startsWith('Partial Pay')
-              ? `Partial upfront payment (${paymentMethod})`
-              : 'Salon billing invoice payment',
-            paid_at: current.created_at || new Date().toISOString(),
-          } as any);
+              reference: paymentMethod.startsWith('Partial Pay')
+                ? `Partial upfront payment (${paymentMethod})`
+                : 'Salon billing invoice payment',
+              paid_at: current.created_at || new Date().toISOString(),
+            } as any),
+            'the payment'
+          );
         }
       } else {
-        // Bill is fully pending / unpaid
-        await supabase.from('payments').delete().eq('bill_id', effectiveBillId);
+        assertSaved(await supabase.from('payments').delete().eq('bill_id', effectiveBillId), 'the payment');
       }
 
-      // Synchronize customer dues in Supabase
+      // 4. Customer dues
       const oldDue = current.due_amount_minor !== undefined
         ? current.due_amount_minor
         : (current.status === 'pending' ? current.total_minor : 0);
       const newDue = dueAmountMinor;
 
-      if (current.customer_id && current.customer_id !== customerId && oldDue > 0) {
-        const { data: oldCust } = await supabase
+      const adjustCustomerDue = async (id: string, delta: number) => {
+        const { data: row, error: readError } = await supabase
           .from('customers')
           .select('outstanding_due_minor')
-          .eq('id', current.customer_id)
-          .single();
-        if (oldCust) {
+          .eq('id', id)
+          .maybeSingle();
+        assertSaved({ error: readError }, "the customer's dues");
+        if (!row) return;
+        assertSaved(
           await supabase
             .from('customers')
-            .update({ outstanding_due_minor: Math.max(0, (oldCust.outstanding_due_minor || 0) - oldDue) })
-            .eq('id', current.customer_id);
-        }
-      }
+            .update({ outstanding_due_minor: Math.max(0, (row.outstanding_due_minor || 0) + delta) })
+            .eq('id', id),
+          "the customer's dues"
+        );
+      };
 
-      if (customerId) {
-        const dueDiff = current.customer_id === customerId ? (newDue - oldDue) : newDue;
-        if (dueDiff !== 0) {
-          const { data: custRow } = await supabase
-            .from('customers')
-            .select('outstanding_due_minor')
-            .eq('id', customerId)
-            .single();
-          if (custRow) {
-            await supabase
-              .from('customers')
-              .update({ outstanding_due_minor: Math.max(0, (custRow.outstanding_due_minor || 0) + dueDiff) })
-              .eq('id', customerId);
-          }
-        }
+      if (current.customer_id && isValidUuid(current.customer_id) && current.customer_id !== customerId && oldDue > 0) {
+        await adjustCustomerDue(current.customer_id, -oldDue);
       }
-    } catch (e) {
-      console.warn('updateBill offline fallback:', e);
+      if (customerId && isValidUuid(customerId)) {
+        const dueDiff = current.customer_id === customerId ? newDue - oldDue : newDue;
+        if (dueDiff !== 0) await adjustCustomerDue(customerId, dueDiff);
+      }
     }
 
     const hasMatch = cached.some((b) => b.id === effectiveBillId || (b.invoice_number && b.invoice_number === current.invoice_number));

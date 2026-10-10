@@ -11,10 +11,19 @@ import { PlanSelectionModal } from '../components/subscription/PlanSelectionModa
 import { PlanId } from '../config/planConfig';
 
 // Repositories & Services
+import { INVITE_SHOP_KEY } from '../repositories/staffRepository';
 import { authRepository, AuthUser } from '../repositories/authRepository';
 import { shopRepository, ShopRow, ShopRegistrationData } from '../repositories/shopRepository';
 import { customerRepository } from '../repositories/customerRepository';
 import { staffRepository } from '../repositories/staffRepository';
+import {
+  canAccessScreen,
+  canShareBills,
+  expensesVisibleTo,
+  requiredPermission,
+  resolvePermissions,
+  STYLIST_MODULE_LABELS,
+} from '../utils/stylistAccess';
 import { serviceRepository } from '../repositories/serviceRepository';
 import { offerRepository } from '../repositories/offerRepository';
 import { appointmentRepository } from '../repositories/appointmentRepository';
@@ -32,6 +41,8 @@ import { systemLogService } from '../services/systemLogService';
 
 // Screens
 import { SplashScreen } from '../screens/splash/SplashScreen';
+import { WelcomeTourScreen } from '../screens/onboarding/WelcomeTourScreen';
+import { onboardingRepository } from '../repositories/onboardingRepository';
 import { PhoneScreen } from '../screens/auth/PhoneScreen';
 import { OtpScreen } from '../screens/auth/OtpScreen';
 import { RegisterScreen } from '../screens/auth/RegisterScreen';
@@ -59,6 +70,8 @@ import { versionService, VersionCheckResult } from '../services/versionService';
 import { UpdateRequiredModal } from '../components/common/UpdateRequiredModal';
 import { appReviewService } from '../services/appReviewService';
 import { AppReviewModal } from '../components/common/AppReviewModal';
+import { QuickBookSuggestion } from '../services/quickBookService';
+import { resolveFreeSalesLimit } from '../utils/subscriptionUtils';
 
 export const AppNavigator = () => {
   const { colors } = useTheme();
@@ -118,6 +131,12 @@ export const AppNavigator = () => {
     count: 0,
   });
   const [showReviewModal, setShowReviewModal] = useState<boolean>(false);
+  // Services/stylist pre-chosen when the full booking screen is opened from Home's quick booking
+  const [bookingPreset, setBookingPreset] = useState<{ serviceIds: string[]; staffIds: string[] } | null>(null);
+
+  useEffect(() => {
+    if (screen !== 'booking') setBookingPreset(null);
+  }, [screen]);
 
   // App version enforcement state
   const [versionCheck, setVersionCheck] = useState<VersionCheckResult | null>(null);
@@ -162,6 +181,11 @@ export const AppNavigator = () => {
           const phoneMatch = url.match(/[?&]phone=([0-9+]+)/);
           const rawPhone = phoneMatch ? phoneMatch[1] : '';
           const cleanPhone = rawPhone.replace(/\D/g, '').slice(-10);
+          // Remember which salon sent the invite, as the same number can be a stylist in several
+          const shopMatch = url.match(/[?&]shop=([0-9a-fA-F-]{36})/);
+          if (shopMatch) {
+            await AsyncStorage.setItem(INVITE_SHOP_KEY, shopMatch[1]).catch(() => {});
+          }
 
           if (cleanPhone.length === 10) {
             const stylist = await staffRepository.getStylistByPhone(cleanPhone);
@@ -206,6 +230,8 @@ export const AppNavigator = () => {
         ]);
 
         if (cachedShop) {
+          // Reconnect to the database in the background so owner-only saves are accepted
+          authRepository.ensureSupabaseSession().catch(() => {});
           if (isMounted) {
             setCurrentShop(cachedShop);
             shopRepository.resolveOwnerName(cachedShop.owner_profile_id).then((oName) => {
@@ -339,6 +365,12 @@ export const AppNavigator = () => {
     };
   }, []);
 
+  const freeSalesLimit = resolveFreeSalesLimit(currentShop?.free_sales_limit);
+
+  const refreshShopData = async () => {
+    if (currentShop) await loadShopData(currentShop.id);
+  };
+
   const loadShopData = async (shopId: string) => {
     try {
       let activeShopId = shopId;
@@ -363,18 +395,24 @@ export const AppNavigator = () => {
       }
 
       const isStylistUser = currentUser?.role === 'stylist';
-      let perms = currentUser?.permissions || (isStylistUser ? DEFAULT_STYLIST_PERMISSIONS : null);
+      let perms = isStylistUser ? resolvePermissions(currentUser?.permissions) : null;
 
       if (isStylistUser && currentUser?.phone) {
         const clean = currentUser.phone.replace(/\D/g, '').slice(-10);
         const freshStylist = await staffRepository.getStylistByPhone(clean);
         if (freshStylist && freshStylist.permissions) {
-          perms = freshStylist.permissions;
+          perms = resolvePermissions(freshStylist.permissions);
           setCurrentUser((prev) => (prev ? { ...prev, permissions: freshStylist.permissions } : prev));
         }
       }
 
-      const [c, st, cats, sv, o, a, b, ex, rem, r, salesCount, subInfo] = await Promise.all([
+      // The plan check runs on its own: a failure in any other fetch below must not make a paid shop look free
+      const subInfoPromise = subscriptionRepository.getSubscriptionInfo(activeShopId).catch(() => null);
+      subInfoPromise.then((info) => {
+        setIsPro(Boolean(info && info.type === 'subscription' && !info.subscription?.isExpired));
+      });
+
+      const [c, st, cats, sv, o, a, b, ex, rem, r, salesCount] = await Promise.all([
         !isStylistUser || perms?.customers !== false
           ? customerRepository.getCustomers(activeShopId)
           : Promise.resolve([]),
@@ -398,7 +436,6 @@ export const AppNavigator = () => {
           ? reminderRepository.getRules(activeShopId)
           : Promise.resolve([]),
         billingRepository.getTotalSalesCreatedCount(activeShopId),
-        subscriptionRepository.getSubscriptionInfo(activeShopId).catch(() => null),
       ]);
       setCustomers(c);
       setStaff(st);
@@ -419,12 +456,6 @@ export const AppNavigator = () => {
           setTimeout(() => setShowReviewModal(true), 1500);
         }
       }).catch(() => {});
-
-      if (subInfo && subInfo.type === 'subscription' && !subInfo.subscription?.isExpired) {
-        setIsPro(true);
-      } else {
-        setIsPro(false);
-      }
     } catch (e) {
       console.warn('Error loading shop data:', e);
     }
@@ -452,10 +483,12 @@ export const AppNavigator = () => {
 
   // Navigation helpers & Stylist Access Control
   const isStylist = currentUser?.role === 'stylist';
-  const stylistPerms = currentUser?.permissions || (isStylist ? DEFAULT_STYLIST_PERMISSIONS : null);
+  const stylistPerms = isStylist ? resolvePermissions(currentUser?.permissions) : null;
+  // Stylists without "past expenses" only ever see today's expenses, wherever expenses are shown.
+  const visibleExpenses = expensesVisibleTo(expenses, isStylist, stylistPerms);
 
   const checkStylistAccess = (moduleName: keyof StylistPermissions, label: string): boolean => {
-    if (isStylist && stylistPerms && stylistPerms[moduleName] === false) {
+    if (isStylist && stylistPerms && stylistPerms[moduleName] !== true) {
       Alert.alert(
         'Access Restricted',
         `You do not have permission to access ${label}. Please contact your salon owner.`
@@ -466,16 +499,10 @@ export const AppNavigator = () => {
   };
 
   const navigateTo = (nextScreen: ScreenName, resetHistory = false) => {
-    if (isStylist && stylistPerms) {
-      if (nextScreen === 'expenses' && !checkStylistAccess('expenses', 'Expenses')) return;
-      if (nextScreen === 'reports' && !checkStylistAccess('reports', 'Reports')) return;
-      if (nextScreen === 'staff' && !checkStylistAccess('team', 'Team Management')) return;
-      if (nextScreen === 'profile' && !checkStylistAccess('profile', 'Salon Profile')) return;
-      if (nextScreen === 'reminders' && !checkStylistAccess('reminders', 'Reminders')) return;
-      if (nextScreen === 'bulk' && !checkStylistAccess('reminders', 'WhatsApp Broadcast')) return;
-      if ((nextScreen === 'appointments' || nextScreen === 'booking') && !checkStylistAccess('appointments', 'Appointments')) return;
-      if ((nextScreen === 'bill' || nextScreen === 'invoice' || nextScreen === 'sent') && !checkStylistAccess('sales', 'Billing & Sales')) return;
-      if ((nextScreen === 'customer' || nextScreen === 'customers') && !checkStylistAccess('customers', 'Customers')) return;
+    if (isStylist && !canAccessScreen(nextScreen, true, stylistPerms)) {
+      const key = requiredPermission(nextScreen);
+      if (key) checkStylistAccess(key, STYLIST_MODULE_LABELS[key]);
+      return;
     }
 
     if (resetHistory) {
@@ -500,9 +527,10 @@ export const AppNavigator = () => {
   };
 
   const handleTabSelect = (tab: MainTab) => {
-    if (isStylist && stylistPerms) {
-      if (tab === 'customers' && !checkStylistAccess('customers', 'Customers')) return;
-      if (tab === 'sales' && !checkStylistAccess('sales', 'Sales')) return;
+    if (isStylist && !canAccessScreen(tab, true, stylistPerms)) {
+      const key = requiredPermission(tab);
+      if (key) checkStylistAccess(key, STYLIST_MODULE_LABELS[key]);
+      return;
     }
 
     setActiveTab(tab);
@@ -529,7 +557,7 @@ export const AppNavigator = () => {
   useEffect(() => {
     const onBackPress = () => {
       // 1. While on splash screen or initializing, ignore back press
-      if (screen === 'splash' || isInitializing) {
+      if (screen === 'splash' || screen === 'welcomeTour' || isInitializing) {
         return true;
       }
 
@@ -601,6 +629,17 @@ export const AppNavigator = () => {
     navigateTo('otp');
   };
 
+  // The owner's real name is used wherever the owner is chosen as the stylist (new bill, booking, invoice).
+  // Load it right after a fresh login too, not only when the app restarts.
+  const loadOwnerName = (ownerProfileId: string | null) => {
+    shopRepository
+      .resolveOwnerName(ownerProfileId)
+      .then((name) => {
+        if (name) setOwnerName(name);
+      })
+      .catch(() => {});
+  };
+
   const handleVerifyOtp = async (otp: string) => {
     const res = await authService.verifyOtp(authPhone, otp, authSessionId);
     if (res.success && res.user) {
@@ -644,6 +683,7 @@ export const AppNavigator = () => {
         await authRepository.setCurrentShopId(stylist.shop_id);
         await shopRepository.saveLastPhone(clean);
         setCurrentShop(shop);
+        loadOwnerName(shop.owner_profile_id);
         await shopRepository.cacheShop(shop);
         await loadShopData(shop.id);
         handleTabSelect('home');
@@ -672,6 +712,7 @@ export const AppNavigator = () => {
 
       if (shop) {
         setCurrentShop(shop);
+        loadOwnerName(shop.owner_profile_id);
         await shopRepository.cacheShop(shop);
         await authRepository.setCurrentShopId(shop.id);
         await loadShopData(shop.id);
@@ -816,7 +857,7 @@ export const AppNavigator = () => {
     }
   };
 
-  const handleProceedToInvoice = async (billData: {
+  const saveBillAndOpenInvoice = async (billData: {
     customerName: string;
     customerId: string | null;
     staffName: string;
@@ -1014,10 +1055,18 @@ export const AppNavigator = () => {
 
     // If billing an in-chair appointment, advance it to Done
     if (pendingAppointmentToBill) {
-      await appointmentRepository.updateStatus(currentShop.id, pendingAppointmentToBill.id, 'Done');
-      setAppointments((prev) =>
-        prev.map((a) => (a.id === pendingAppointmentToBill.id ? { ...a, status: 'Done' } : a))
-      );
+      try {
+        await appointmentRepository.updateStatus(currentShop.id, pendingAppointmentToBill.id, 'Done');
+        setAppointments((prev) =>
+          prev.map((a) => (a.id === pendingAppointmentToBill.id ? { ...a, status: 'Done' } : a))
+        );
+      } catch (e: any) {
+        // The bill itself is saved at this point, so say exactly that
+        Alert.alert(
+          'Bill saved',
+          `The bill was saved, but the appointment could not be marked as Done: ${e?.message || 'please try again'}`
+        );
+      }
       setPendingAppointmentToBill(null);
       setInitialBillServiceId(null);
       setInitialBillServiceIds([]);
@@ -1026,6 +1075,23 @@ export const AppNavigator = () => {
     }
 
     navigateTo('invoice');
+  };
+
+  const savingBillRef = useRef(false);
+  const [isSavingBill, setIsSavingBill] = useState(false);
+
+  const handleProceedToInvoice = async (billData: Parameters<typeof saveBillAndOpenInvoice>[0]) => {
+    if (savingBillRef.current) return; // a second tap must not create a second bill
+    savingBillRef.current = true;
+    setIsSavingBill(true);
+    try {
+      await saveBillAndOpenInvoice(billData);
+    } catch (e: any) {
+      Alert.alert('Bill not saved', e?.message || 'Could not save the bill. Please try again.');
+    } finally {
+      savingBillRef.current = false;
+      setIsSavingBill(false);
+    }
   };
 
   const handleDeleteBill = async (billId: string) => {
@@ -1115,7 +1181,14 @@ export const AppNavigator = () => {
     navigateTo('sent');
   };
 
-  const handleAddExpense = async (cat: string, amt: number, note: string) => {
+  // Only the owner decides whether an expense counts in profit; a stylist's expenses always count.
+  const handleAddExpense = async (
+    cat: string,
+    amt: number,
+    note: string,
+    includeInProfit = true,
+    staffId: string | null = null
+  ) => {
     if (!currentShop) return;
     try {
       const newExp = await expenseRepository.addExpense(
@@ -1123,7 +1196,9 @@ export const AppNavigator = () => {
         cat,
         amt,
         note,
-        'UPI'
+        'UPI',
+        isStylist ? true : includeInProfit,
+        isStylist ? null : staffId
       );
       setExpenses((prev) => [newExp, ...prev]);
       const refreshed = await expenseRepository.getExpenses(currentShop.id);
@@ -1134,13 +1209,22 @@ export const AppNavigator = () => {
     }
   };
 
-  const handleUpdateExpense = async (expenseId: string, category: string, amountRupees: number, note: string) => {
+  const handleUpdateExpense = async (
+    expenseId: string,
+    category: string,
+    amountRupees: number,
+    note: string,
+    includeInProfit?: boolean,
+    staffId?: string | null
+  ) => {
     if (!currentShop) return;
     try {
       const updated = await expenseRepository.updateExpense(currentShop.id, expenseId, {
         categoryName: category,
         amountRupees,
         note,
+        includeInProfit: isStylist ? undefined : includeInProfit,
+        staffId: isStylist ? undefined : staffId,
       });
       if (updated) {
         setExpenses((prev) => prev.map((e) => (e.id === expenseId ? updated : e)));
@@ -1167,16 +1251,12 @@ export const AppNavigator = () => {
   };
 
   const handleUpdateStaffPermissions = async (staffId: string, permissions: StylistPermissions) => {
-    if (!currentShop) return;
-    try {
-      await staffRepository.updateStaffPermissions(currentShop.id, staffId, permissions);
-      setStaff((prev) =>
-        prev.map((s) => (s.id === staffId ? { ...s, permissions } : s))
-      );
-    } catch (e: any) {
-      Alert.alert('Error', e.message || 'Could not update stylist permissions');
-      throw e;
-    }
+    if (!currentShop) throw new Error('No salon selected');
+    // Errors propagate to the permissions sheet, which shows them.
+    await staffRepository.updateStaffPermissions(currentShop.id, staffId, permissions);
+    setStaff((prev) =>
+      prev.map((s) => (s.id === staffId ? { ...s, permissions } : s))
+    );
   };
 
   const handleUpdateStaff = async (staffId: string, name: string, phone: string, role?: string) => {
@@ -1223,6 +1303,8 @@ export const AppNavigator = () => {
     stylistName: string;
     stylistId?: string | null;
     stylistIds?: string[];
+    serviceQuantities?: Record<string, number>;
+    durationMinutes?: number;
     slot: string;
     dateStr: string;
     amountRupees: number;
@@ -1240,6 +1322,8 @@ export const AppNavigator = () => {
       stylistName: data.stylistName,
       stylistId: data.stylistId,
       stylistIds: data.stylistIds,
+      serviceQuantities: data.serviceQuantities,
+      durationMinutes: data.durationMinutes,
       slot: data.slot,
       dateStr: data.dateStr,
       amountRupees: data.amountRupees,
@@ -1249,13 +1333,82 @@ export const AppNavigator = () => {
     navigateTo('appointments');
   };
 
+  // Booking screen: wait for the save, tell the user if it failed, ignore a second tap while saving
+  const bookingInFlightRef = useRef(false);
+  const handleBookingFromScreen = async (data: Parameters<typeof handleConfirmBooking>[0]) => {
+    if (bookingInFlightRef.current) return;
+    bookingInFlightRef.current = true;
+    try {
+      await handleConfirmBooking(data);
+    } catch (e: any) {
+      Alert.alert('Booking failed', e?.message || 'Could not save the booking. Please try again.');
+    } finally {
+      bookingInFlightRef.current = false;
+    }
+  };
+
+  // One-tap "Book again" from Home. Returns true when the booking was saved.
+  const handleQuickConfirm = async (s: QuickBookSuggestion): Promise<boolean> => {
+    if (!checkStylistAccess('appointments', 'Appointments')) return false;
+
+    // Same free-sales limit the full booking screen enforces
+    if (totalSalesCount >= freeSalesLimit && !isPro) {
+      Alert.alert(
+        '100-Sales Limit Reached',
+        'You have completed the free limit of 100 sales on this salon account.\n\nPlease upgrade to Pro to continue booking appointments and creating bills.',
+        [
+          {
+            text: 'Upgrade to Pro',
+            onPress: () => {
+              if (currentUser?.role === 'stylist') {
+                Alert.alert('Owner Action Only', 'Only the salon owner can upgrade subscription plans.');
+                return;
+              }
+              setSelectedPlanForModal('6_months');
+              setShowPlanSelectionModal(true);
+            },
+          },
+          { text: 'Cancel', style: 'cancel' },
+        ]
+      );
+      return false;
+    }
+
+    try {
+      await handleConfirmBooking({
+        customerName: s.customer.name,
+        customerId: s.customer.id,
+        customerPhone: s.customer.phone,
+        serviceName: s.services.map((sv) => sv.name).join(' + '),
+        serviceId: s.services[0]?.id || null,
+        serviceIds: s.services.map((sv) => sv.id),
+        stylistName: s.stylist.name,
+        stylistId: s.stylist.id,
+        stylistIds: s.stylist.id ? [s.stylist.id] : [],
+        slot: s.slot,
+        dateStr: s.dateStr,
+        amountRupees: s.amountRupees,
+        sendConfirm: true,
+      });
+      Alert.alert(t('bookedTitle', 'Booked'), `${s.customer.name} · ${s.slot.replace(/^0/, '')}`);
+      return true;
+    } catch (e: any) {
+      Alert.alert('Booking failed', e?.message || 'Could not save the booking. Please try again.');
+      return false;
+    }
+  };
+
   const handleAdvanceStatus = async (apptId: string) => {
     if (!currentShop) return;
-    const nextStatus = await appointmentRepository.advanceStatus(currentShop.id, apptId);
-    if (nextStatus) {
-      setAppointments((prev) =>
-        prev.map((a) => (a.id === apptId ? { ...a, status: nextStatus } : a))
-      );
+    try {
+      const nextStatus = await appointmentRepository.advanceStatus(currentShop.id, apptId);
+      if (nextStatus) {
+        setAppointments((prev) =>
+          prev.map((a) => (a.id === apptId ? { ...a, status: nextStatus } : a))
+        );
+      }
+    } catch (e: any) {
+      Alert.alert('Appointment not updated', e?.message || 'Could not update the appointment. Please try again.');
     }
   };
 
@@ -1419,8 +1572,13 @@ export const AppNavigator = () => {
         {screen === 'splash' && (
           <SplashScreen
             isReady={!isInitializing}
-            onFinish={() => {
+            onFinish={async () => {
               const target = initialDestinationRef.current;
+              // First-time visitors (not signed in) get a short app tour before login
+              if (target === 'phone' && !(await onboardingRepository.hasSeenWelcomeTour())) {
+                setScreen('welcomeTour');
+                return;
+              }
               setScreen(target);
               if (
                 target === 'home' ||
@@ -1434,8 +1592,18 @@ export const AppNavigator = () => {
           />
         )}
 
+        {screen === 'welcomeTour' && (
+          <WelcomeTourScreen
+            onFinish={() => {
+              onboardingRepository.markWelcomeTourSeen();
+              setScreen(initialDestinationRef.current);
+            }}
+          />
+        )}
+
         {screen === 'home' && (
           <HomeScreen
+            onRefresh={refreshShopData}
             shopName={currentShop?.name}
             logoUrl={currentShop?.logo_path}
             remindersCount={reminders.length}
@@ -1443,29 +1611,42 @@ export const AppNavigator = () => {
             totalSalesCount={totalSalesCount}
             shopCreatedAt={currentShop?.created_at}
             isPro={isPro}
+            shopId={currentShop?.id}
+            customers={customers}
+            appointments={appointments}
+            services={services}
+            staff={staff}
+            ownerName={ownerName}
             onBookSlot={() => {
               setSelectedCustomer(null);
+              setBookingPreset(null);
+              navigateTo('booking');
+            }}
+            onUpgradePlan={
+              currentUser?.role === 'stylist'
+                ? undefined
+                : () => {
+                    setSelectedPlanForModal('6_months');
+                    setShowPlanSelectionModal(true);
+                  }
+            }
+            onQuickConfirm={handleQuickConfirm}
+            preferredStaffId={isStylist ? currentUser?.stylistId ?? null : null}
+            onBookForCustomer={(customer, suggestion) => {
+              setSelectedCustomer(customer);
+              setBookingPreset(
+                suggestion
+                  ? {
+                      serviceIds: suggestion.services.map((sv) => sv.id),
+                      staffIds: suggestion.stylist.id ? [suggestion.stylist.id] : [],
+                    }
+                  : null
+              );
               navigateTo('booking');
             }}
             onNavigateAppointments={() => navigateTo('appointments')}
             onNavigateReminders={() => navigateTo('reminders')}
             onNavigateProfile={() => navigateTo('profile')}
-            onUpgradePlan={() => {
-              if (currentUser?.role === 'stylist') {
-                Alert.alert('Owner Action Only', 'Only the salon owner can upgrade subscription plans.');
-                return;
-              }
-              setSelectedPlanForModal('6_months');
-              setShowPlanSelectionModal(true);
-            }}
-            onSelectPlan={(planId) => {
-              if (currentUser?.role === 'stylist') {
-                Alert.alert('Owner Action Only', 'Only the salon owner can upgrade subscription plans.');
-                return;
-              }
-              setSelectedPlanForModal(planId);
-              setShowPlanSelectionModal(true);
-            }}
             onOpenInvoice={(bill) => {
               setSelectedBill(bill);
               navigateTo('invoice');
@@ -1511,6 +1692,8 @@ export const AppNavigator = () => {
 
         {screen === 'customers' && (
           <CustomersScreen
+            allowContactImport={!isStylist}
+            onRefresh={refreshShopData}
             customers={customers}
             shopId={currentShop?.id}
             onSelectCustomer={(c) => {
@@ -1614,6 +1797,7 @@ export const AppNavigator = () => {
 
         {screen === 'sales' && (
           <SalesScreen
+            onRefresh={refreshShopData}
             bills={bills}
             shopName={currentShop?.name}
             onOpenInvoice={(bill) => {
@@ -1647,10 +1831,12 @@ export const AppNavigator = () => {
             initialServiceIds={initialBillServiceIds}
             initialServiceQuantities={initialBillServiceQuantities}
             initialStaffId={initialBillStaffId}
+            defaultStaffId={isStylist ? currentUser?.stylistId ?? null : null}
             initialStaffName={pendingAppointmentToBill?.staff_name || null}
             ownerName={ownerName}
             isPro={isPro}
             totalSalesCount={totalSalesCount}
+            freeSalesLimit={freeSalesLimit}
             editingBill={editingBill}
             onUpgradePlan={() => {
               if (currentUser?.role === 'stylist') {
@@ -1671,6 +1857,7 @@ export const AppNavigator = () => {
             }}
             onAddNewCustomer={handleQuickAddCustomer}
             onProceedToInvoice={handleProceedToInvoice}
+            isSavingBill={isSavingBill}
           />
         )}
 
@@ -1704,6 +1891,7 @@ export const AppNavigator = () => {
             }
             userRole={currentUser?.role}
             isStylist={currentUser?.role === 'stylist'}
+            canShareBills={canShareBills(isStylist, stylistPerms)}
             onBack={goBack}
             onSendWhatsApp={handleSendInvoiceWhatsApp}
             onEditBill={(b) => {
@@ -1730,15 +1918,16 @@ export const AppNavigator = () => {
 
         {screen === 'accounts' && (
           <AccountsScreen
+            onRefresh={refreshShopData}
             openRemindersCount={reminders.length}
             bills={bills}
-            expenses={expenses}
+            expenses={visibleExpenses}
             shopId={currentShop?.id}
             shopName={currentShop?.name || 'My Salon'}
             userPhone={currentShop?.phone || authPhone}
             userId={currentUser?.id || currentShop?.owner_profile_id || undefined}
             currentUserRole={currentUser?.role === 'stylist' ? 'stylist' : 'owner'}
-            stylistPermissions={currentUser?.permissions || (currentUser?.role === 'stylist' ? DEFAULT_STYLIST_PERMISSIONS : null)}
+            stylistPermissions={stylistPerms}
             initialSocialLinks={currentShop?.social_links as SocialLinks | null}
             onUpdateSocialLinks={async (links) => {
               if (currentShop) {
@@ -1751,6 +1940,9 @@ export const AppNavigator = () => {
                 ? undefined
                 : () => setShowPlanSelectionModal(true)
             }
+            isPro={isPro}
+            planSalesCount={totalSalesCount}
+            freeSalesLimit={freeSalesLimit}
             onAccountDeleted={handleSignOut}
             onSignOut={handleSignOut}
             onPhoneUpdated={(newPhone) => {
@@ -1762,7 +1954,12 @@ export const AppNavigator = () => {
 
         {screen === 'expenses' && (
           <ExpensesScreen
-            expenses={expenses}
+            onRefresh={refreshShopData}
+            expenses={visibleExpenses}
+            todayOnly={isStylist && stylistPerms?.expensesHistory !== true}
+            canChooseProfit={!isStylist}
+            staff={staff}
+            canTagStylist={!isStylist}
             onBack={goBack}
             onAddExpense={handleAddExpense}
             onEditExpense={handleUpdateExpense}
@@ -1772,6 +1969,7 @@ export const AppNavigator = () => {
 
         {screen === 'appointments' && (
           <AppointmentsScreen
+            onRefresh={refreshShopData}
             appointments={appointments}
             staff={staff}
             shopId={currentShop?.id}
@@ -1893,15 +2091,28 @@ export const AppNavigator = () => {
             staff={staff}
             appointments={appointments}
             initialCustomerId={selectedCustomer?.id || null}
+            initialServiceIds={bookingPreset?.serviceIds}
+            initialStaffIds={bookingPreset?.staffIds}
             ownerName={ownerName}
             totalSalesCount={totalSalesCount}
+            freeSalesLimit={freeSalesLimit}
             isPro={isPro}
             onBack={() => {
               setSelectedCustomer(null);
               goBack();
             }}
             onAddNewCustomer={handleQuickAddCustomer}
-            onConfirmBooking={handleConfirmBooking}
+            categories={categories}
+            onAddNewService={async (cat: string, name: string, priceRupees: number, durationMinutes: number) => {
+              if (!currentShop) throw new Error('No active shop');
+              const created = await serviceRepository.addService(currentShop.id, cat, name, priceRupees, durationMinutes);
+              setServices((prev) => [...prev.filter((x) => x.id !== created.id), created]);
+              const reloadedCats = await serviceRepository.getCategories(currentShop.id);
+              setCategories(reloadedCats);
+              return created;
+            }}
+            onConfirmBooking={handleBookingFromScreen}
+            defaultStaffId={isStylist ? currentUser?.stylistId ?? null : null}
             onUpgradePlan={() => {
               if (currentUser?.role === 'stylist') {
                 Alert.alert('Owner Action Only', 'Only the salon owner can upgrade subscription plans.');
@@ -1915,6 +2126,7 @@ export const AppNavigator = () => {
 
         {screen === 'reminders' && (
           <RemindersScreen
+            onRefresh={refreshShopData}
             reminders={reminders}
             rules={rules}
             onBack={goBack}
@@ -1964,6 +2176,7 @@ export const AppNavigator = () => {
 
         {screen === 'staff' && (
           <StaffScreen
+            onRefresh={refreshShopData}
             staff={staff}
             bills={bills}
             shopId={currentShop?.id}
@@ -1971,6 +2184,7 @@ export const AppNavigator = () => {
             ownerName={ownerName}
             isPro={isPro}
             totalSalesCount={totalSalesCount}
+            freeSalesLimit={freeSalesLimit}
             onUpgradePlan={() => {
               if (currentUser?.role === 'stylist') {
                 Alert.alert('Owner Action Only', 'Only the salon owner can upgrade subscription plans.');
@@ -2072,6 +2286,7 @@ export const AppNavigator = () => {
             shopCreatedAt={currentShop.created_at}
             isPro={isPro}
             totalSalesCount={totalSalesCount}
+            freeSalesLimit={freeSalesLimit}
             onBack={goBack}
             onUpgradePlan={() => {
               if (currentUser?.role === 'stylist') {
@@ -2111,7 +2326,7 @@ export const AppNavigator = () => {
         {screen === 'reports' && (
           <ReportsScreen
             bills={bills}
-            expenses={expenses}
+            expenses={visibleExpenses}
             staff={staff}
             customers={customers}
             appointments={appointments}
@@ -2126,6 +2341,7 @@ export const AppNavigator = () => {
             shopGstin={currentShop?.gstin || undefined}
             isPro={isPro}
             totalSalesCount={totalSalesCount}
+            freeSalesLimit={freeSalesLimit}
             onUpgradePlan={() => {
               if (currentUser?.role === 'stylist') {
                 Alert.alert('Owner Action Only', 'Only the salon owner can upgrade subscription plans.');

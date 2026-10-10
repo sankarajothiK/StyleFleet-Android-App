@@ -6,6 +6,11 @@ module.exports = {
     '^.+\\.tsx?$': ['ts-jest', { tsconfig: 'tsconfig.json' }],
   },
   moduleNameMapper: {
+    // Tests never talk to the live Supabase project (they used to, and left test salons in it).
+    // Only the opt-in live audit (RUN_LIVE_QA=1) uses the real client.
+    ...(process.env.RUN_LIVE_QA === '1'
+      ? {}
+      : { '^(\\.\\./)+(src/)?lib/supabase$': '<rootDir>/__mocks__/supabase.js' }),
     '^@/(.*)$': '<rootDir>/src/$1',
     '^react-native$': '<rootDir>/__mocks__/react-native.js',
     '^@react-native-async-storage/async-storage$': '<rootDir>/__mocks__/async-storage.js',

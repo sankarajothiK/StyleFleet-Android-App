@@ -40,8 +40,14 @@ import { appointmentRepository, STANDARD_SLOTS } from '../../repositories/appoin
 import { shopRepository } from '../../repositories/shopRepository';
 import { staffRepository } from '../../repositories/staffRepository';
 import { generateTimeSlots } from './BookingScreen';
+import { toLocalDateStr } from '../../utils/dateUtils';
+import { GlassBackdrop } from '../../components/common/GlassBackdrop';
+import { localeFor } from '../../i18n/format';
+import { getGlass } from '../../theme/glass';
+import { usePullRefresh } from '../../hooks/usePullRefresh';
 
 interface AppointmentsScreenProps {
+  onRefresh?: () => Promise<void>;
   appointments: Appointment[];
   staff?: StaffMember[];
   shopId?: string;
@@ -87,7 +93,7 @@ function parseAppointmentDateTime(startsAt: string): Date | null {
   } else if (parts[0].includes('-')) {
     datePart = parts[0];
   } else {
-    datePart = new Date().toISOString().split('T')[0];
+    datePart = toLocalDateStr(new Date());
     timePart = parts[0];
     ampmPart = parts[1] || '';
   }
@@ -110,6 +116,18 @@ function parseAppointmentDateTime(startsAt: string): Date | null {
   const [y, m, d] = datePart.split('-').map(Number);
   if (!y || !m || !d) return null;
   return new Date(y, m - 1, d, hour, min, 0, 0);
+}
+
+// Time only ("10:30 AM"), whatever shape starts_at has (date + time, ISO, or time alone)
+function formatTimeOnly(startsAt: string): string {
+  if (!startsAt) return '';
+  const ampm = startsAt.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+  if (ampm) return `${ampm[1].padStart(2, '0')}:${ampm[2]} ${ampm[3].toUpperCase()}`;
+  const d = parseAppointmentDateTime(startsAt);
+  if (!d) return startsAt;
+  const h = d.getHours();
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  return `${String(h12).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')} ${h >= 12 ? 'PM' : 'AM'}`;
 }
 
 // -------------------------------------------------------------
@@ -182,7 +200,13 @@ const SwipeableCardRow: React.FC<SwipeableRowProps> = ({
   return (
     <View style={styles.swipeContainer}>
       {/* Background Delete Action Button */}
-      <View style={styles.revealedDeleteAction}>
+      <Animated.View
+        pointerEvents="box-none"
+        style={[
+          styles.revealedDeleteAction,
+          { opacity: translateX.interpolate({ inputRange: [-80, -8, 0], outputRange: [1, 0, 0], extrapolate: 'clamp' }) },
+        ]}
+      >
         <TouchableOpacity
           activeOpacity={0.8}
           onPress={handleManualDeletePress}
@@ -191,7 +215,7 @@ const SwipeableCardRow: React.FC<SwipeableRowProps> = ({
           <TrashIcon size={20} color="#FFFFFF" />
           <Text style={styles.revealedDeleteText}>Delete</Text>
         </TouchableOpacity>
-      </View>
+      </Animated.View>
 
       {/* Foreground Animated Content */}
       <Animated.View
@@ -205,6 +229,7 @@ const SwipeableCardRow: React.FC<SwipeableRowProps> = ({
 };
 
 export const AppointmentsScreen = ({
+  onRefresh,
   appointments: initialAppointments,
   staff: initialStaff,
   shopId = '',
@@ -218,8 +243,9 @@ export const AppointmentsScreen = ({
   onEditAppointment,
   onDeleteAppointment,
 }: AppointmentsScreenProps) => {
+  const pullRefresh = usePullRefresh(onRefresh);
   const { colors } = useTheme();
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
 
   // Local state for instant optimistic updates
   const [localAppointments, setLocalAppointments] = useState<Appointment[]>(initialAppointments);
@@ -396,21 +422,34 @@ export const AppointmentsScreen = ({
 
   // Dynamic 7-day slider starting from Today
   const upcomingDays = useMemo(() => {
-    const list: { dateStr: string; dow: string; dateNum: string; label: string }[] = [];
+    const list: {
+      dateStr: string;
+      dow: string;
+      dateNum: string;
+      label: string;
+      fullLabel: string;
+      isToday: boolean;
+    }[] = [];
     const now = new Date();
-    for (let i = 0; i < 7; i++) {
+    for (let i = -1; i < 14; i++) {
       const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() + i);
-      const dow = i === 0 ? t('today') : d.toLocaleDateString('en-US', { weekday: 'short' });
+      const dow =
+        i === -1
+          ? t('yesterday', 'Yest.')
+          : i === 0
+          ? t('today')
+          : d.toLocaleDateString(localeFor(language), { weekday: 'short' });
       const dateNum = String(d.getDate());
-      const dateStr = d.toISOString().split('T')[0];
-      const label = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-      list.push({ dateStr, dow, dateNum, label });
+      const dateStr = toLocalDateStr(d);
+      const label = d.toLocaleDateString(localeFor(language), { month: 'short', day: 'numeric' });
+      const fullLabel = d.toLocaleDateString(localeFor(language), { weekday: 'long', day: 'numeric', month: 'long' });
+      list.push({ dateStr, dow, dateNum, label, fullLabel, isToday: i === 0 });
     }
     return list;
-  }, []);
+  }, [language]);
 
-  const [selectedDayIndex, setSelectedDayIndex] = useState(0);
-  const selectedDay = upcomingDays[selectedDayIndex] || upcomingDays[0];
+  const [selectedDayIndex, setSelectedDayIndex] = useState(1);
+  const selectedDay = upcomingDays[selectedDayIndex] || upcomingDays[1] || upcomingDays[0];
 
   // Filter appointments for selected day
   const filteredAppointments = useMemo(() => {
@@ -419,7 +458,7 @@ export const AppointmentsScreen = ({
         return true;
       }
       // If date is today and appointment only has time slot (e.g. "10:00 AM"), show under Today
-      if (selectedDayIndex === 0 && a.starts_at && !a.starts_at.includes('-')) {
+      if (selectedDay.isToday && a.starts_at && !a.starts_at.includes('-')) {
         return true;
       }
       return false;
@@ -460,8 +499,10 @@ export const AppointmentsScreen = ({
                 await appointmentRepository.deleteAppointment(shopId || appt.shop_id, appt.id, auditInfo);
               }
               loadHistoryData();
-            } catch (err) {
-              console.warn('Delete appointment error:', err);
+            } catch (err: any) {
+              // Not deleted: put it back so the screen matches what is really saved
+              setLocalAppointments((prev) => (prev.some((item) => item.id === appt.id) ? prev : [...prev, appt]));
+              Alert.alert('Appointment not deleted', err?.message || 'Could not delete the appointment. Please try again.');
             }
           },
         },
@@ -617,13 +658,32 @@ export const AppointmentsScreen = ({
       });
   };
 
+  const glass = getGlass(colors.isDark);
+
+  const statusLabel = (status: AppointmentStatus): string => {
+    switch (status) {
+      case 'Confirmed':
+        return t('statusConfirmed', 'Confirmed');
+      case 'Not confirmed':
+        return t('statusNotConfirmed', 'Not confirmed');
+      case 'In chair':
+        return t('statusInChair', 'In chair');
+      case 'Done':
+        return t('statusDone', 'Done');
+      case 'Cancelled':
+        return t('statusCancelled', 'Cancelled');
+      default:
+        return status;
+    }
+  };
+
   const getStatusBadgeStyle = (status: AppointmentStatus) => {
     switch (status) {
       case 'In chair':
         return {
-          bg: colors.accent900,
+          bg: colors.accent + '22',
           border: colors.accent,
-          text: colors.accent200,
+          text: colors.accent,
         };
       case 'Done':
         return {
@@ -634,8 +694,8 @@ export const AppointmentsScreen = ({
       case 'Confirmed':
       default:
         return {
-          bg: 'transparent',
-          border: colors.divider,
+          bg: glass.pill.backgroundColor as string,
+          border: glass.card.borderColor as string,
           text: colors.textMuted,
         };
     }
@@ -649,6 +709,7 @@ export const AppointmentsScreen = ({
 
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.bg }]}>
+      <GlassBackdrop isDark={colors.isDark} />
       <View style={styles.header}>
         <View style={styles.topBar}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
@@ -665,14 +726,14 @@ export const AppointmentsScreen = ({
             style={[
               styles.historyTopBtn,
               {
-                backgroundColor: colors.surface,
-                borderColor: colors.divider,
+                backgroundColor: glass.card.backgroundColor,
+                borderColor: glass.card.borderColor,
               },
             ]}
             accessibilityLabel="Appointment History"
           >
             <HistoryIcon size={17} color={colors.accent} strokeWidth={2} />
-            <Text style={[styles.historyBtnText, { color: colors.accent }]}>History</Text>
+            <Text style={[styles.historyBtnText, { color: colors.accent }]}>{t('history', 'History')}</Text>
           </TouchableOpacity>
         </View>
 
@@ -686,7 +747,7 @@ export const AppointmentsScreen = ({
             const isSelected = selectedDayIndex === i;
             const countForDay = localAppointments.filter((a) => {
               if (a.starts_at && a.starts_at.includes(d.dateStr)) return true;
-              if (i === 0 && a.starts_at && !a.starts_at.includes('-')) return true;
+              if (d.isToday && a.starts_at && !a.starts_at.includes('-')) return true;
               return false;
             }).length;
 
@@ -698,15 +759,17 @@ export const AppointmentsScreen = ({
                 style={[
                   styles.dayChip,
                   {
-                    borderColor: isSelected ? colors.accent : colors.divider,
-                    backgroundColor: isSelected ? colors.accent900 : 'transparent',
+                    borderColor: isSelected ? colors.accent : glass.card.borderColor,
+                    backgroundColor: isSelected ? colors.accent : glass.card.backgroundColor,
                   },
                 ]}
               >
                 <Text
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
                   style={[
                     styles.dowText,
-                    { color: isSelected ? colors.accent200 : colors.textDim },
+                    { color: isSelected ? '#161826' : colors.textDim },
                   ]}
                 >
                   {d.dow}
@@ -714,34 +777,60 @@ export const AppointmentsScreen = ({
                 <Text
                   style={[
                     styles.dateNumText,
-                    { color: isSelected ? colors.accent200 : colors.text },
+                    { color: isSelected ? '#161826' : colors.text },
                   ]}
                 >
                   {d.dateNum}
                 </Text>
-                <Text
+                <View
                   style={[
-                    styles.countText,
-                    { color: isSelected ? colors.accent200 : colors.textSubtle },
+                    styles.countPill,
+                    {
+                      backgroundColor: isSelected
+                        ? 'rgba(22, 24, 38, 0.18)'
+                        : countForDay > 0
+                        ? colors.accent + '26'
+                        : 'transparent',
+                    },
                   ]}
                 >
-                  {countForDay}
-                </Text>
+                  <Text
+                    style={[
+                      styles.countText,
+                      {
+                        color: isSelected ? '#161826' : countForDay > 0 ? colors.accent : colors.textSubtle,
+                        fontWeight: countForDay > 0 ? '700' : '400',
+                      },
+                    ]}
+                  >
+                    {countForDay}
+                  </Text>
+                </View>
               </TouchableOpacity>
             );
           })}
         </ScrollView>
       </View>
 
-      <ScrollView contentContainerStyle={styles.scrollContent}>
+      <ScrollView contentContainerStyle={styles.scrollContent} refreshControl={pullRefresh}>
         {/* Agenda summary line */}
-        <Text style={[styles.summaryText, { color: colors.textDim }]}>
-          {filteredAppointments.length} {t('appointments')} · {inrFromMinor(totalExpectedMinor)}
+        <Text style={[styles.dateHeading, { color: colors.text }]}>
+          {selectedDay.isToday ? `${t('today')} · ` : ''}
+          {selectedDay.fullLabel}
         </Text>
+        <View style={styles.summaryRow}>
+          <View style={[styles.summaryTile, { backgroundColor: glass.card.backgroundColor, borderColor: glass.card.borderColor }]}>
+            <Text numberOfLines={1} adjustsFontSizeToFit style={[styles.summaryValue, { color: colors.text }]}>{filteredAppointments.length}</Text>
+            <Text style={[styles.summaryLabel, { color: colors.textDim }]}>{t('appointments').toUpperCase()}</Text>
+          </View>
+          <View style={[styles.summaryTile, { backgroundColor: glass.card.backgroundColor, borderColor: glass.card.borderColor }]}>
+            <Text numberOfLines={1} adjustsFontSizeToFit style={[styles.summaryValue, { color: colors.accent, flexShrink: 1 }]}>{inrFromMinor(totalExpectedMinor)}</Text>
+            <Text style={[styles.summaryLabel, { color: colors.textDim }]} numberOfLines={1}>{t('apExpected', 'EXPECTED')}</Text>
+          </View>
+        </View>
 
         {filteredAppointments.length === 0 ? (
           <View style={styles.emptyContainer}>
-            <Text style={{ fontSize: 28, marginBottom: 8 }}>📅</Text>
             <Text style={[styles.emptyTitle, { color: colors.text }]}>
               {t('noAppointments')}
             </Text>
@@ -752,9 +841,7 @@ export const AppointmentsScreen = ({
             {filteredAppointments.map((a) => {
               const badgeStyle = getStatusBadgeStyle(a.status);
               const railColor = getRailColor(a.status);
-              const timeDisplay = a.starts_at.includes(' ')
-                ? a.starts_at.split(' ').slice(1).join(' ')
-                : a.starts_at;
+              const timeDisplay = formatTimeOnly(a.starts_at);
 
               return (
                 <SwipeableCardRow
@@ -765,11 +852,8 @@ export const AppointmentsScreen = ({
                   <View style={styles.appointmentRow}>
                     {/* Time Column */}
                     <View style={styles.timeColumn}>
-                      <Text style={[styles.timeText, { color: colors.text }]}>
+                      <Text style={[styles.timeText, { color: colors.text }]} numberOfLines={1}>
                         {timeDisplay}
-                      </Text>
-                      <Text style={[styles.durText, { color: colors.textDim }]}>
-                        {a.duration_minutes || 45}m
                       </Text>
                     </View>
 
@@ -777,13 +861,10 @@ export const AppointmentsScreen = ({
                     <View style={[styles.rail, { backgroundColor: railColor }]} />
 
                     {/* Details Card */}
-                    <View style={[styles.card, { backgroundColor: colors.surface }]}>
+                    <View style={[styles.card, { backgroundColor: glass.card.backgroundColor, borderColor: glass.card.borderColor }]}>
                       {/* Card Header with 3-dot Action Menu */}
                       <View style={styles.cardHeader}>
-                        <Text
-                          numberOfLines={1}
-                          style={[styles.customerName, { color: colors.text }]}
-                        >
+                        <Text style={[styles.customerName, { color: colors.text }]}>
                           {a.customer_name}
                         </Text>
                         <View style={styles.cardHeaderRight}>
@@ -816,7 +897,7 @@ export const AppointmentsScreen = ({
                             ]}
                           >
                             <Text style={[styles.statusBadgeText, { color: badgeStyle.text }]}>
-                              {a.status}
+                              {statusLabel(a.status)}
                             </Text>
                           </View>
 
@@ -832,12 +913,19 @@ export const AppointmentsScreen = ({
                         </View>
                       </View>
 
-                      <Text
-                        numberOfLines={1}
-                        style={[styles.serviceSub, { color: colors.textDim }]}
-                      >
-                        {a.service_name} · {a.staff_name || t('anyStylist')} ·{' '}
-                        {inrFromMinor(a.amount_minor || 0)}
+                      {/* One line per service so long orders wrap instead of being cut off */}
+                      <View style={styles.serviceList}>
+                        {(a.service_name || '')
+                          .split(' + ')
+                          .filter(Boolean)
+                          .map((svc, idx) => (
+                            <Text key={`${a.id}_svc_${idx}`} style={[styles.serviceLine, { color: colors.text }]}>
+                              • {svc}
+                            </Text>
+                          ))}
+                      </View>
+                      <Text style={[styles.serviceSub, { color: colors.textDim }]}>
+                        {a.staff_name || t('anyStylist')} · {inrFromMinor(a.amount_minor || 0)} · {a.duration_minutes || 45}{t('apMinShort', 'm')}
                       </Text>
 
                       {/* Actions buttons */}
@@ -849,10 +937,10 @@ export const AppointmentsScreen = ({
                             activeOpacity={0.7}
                             style={[
                               styles.advanceButton,
-                              { backgroundColor: colors.accent900, borderColor: colors.accent },
+                              { backgroundColor: colors.accent + '22', borderColor: colors.accent },
                             ]}
                           >
-                            <Text style={[styles.advanceButtonText, { color: colors.accent200 }]}>
+                            <Text style={[styles.advanceButtonText, { color: colors.accent, fontWeight: '700' }]}>
                               {t('markArrived')}
                             </Text>
                           </TouchableOpacity>
@@ -886,7 +974,7 @@ export const AppointmentsScreen = ({
                             ]}
                           >
                             <Text style={[styles.advanceButtonText, { color: '#34C759' }]}>
-                              ✓ Billed
+                              {t('apBilled', '✓ Billed')}
                             </Text>
                           </View>
                         )}
@@ -896,10 +984,10 @@ export const AppointmentsScreen = ({
                           <TouchableOpacity
                             onPress={() => handleDirectWhatsAppRemind(a)}
                             activeOpacity={0.7}
-                            style={styles.remindButton}
+                            style={[styles.remindButton, { backgroundColor: 'rgba(37, 211, 102, 0.12)', borderColor: 'rgba(37, 211, 102, 0.4)' }]}
                           >
                             <WhatsAppIcon size={13} color="#25D366" />
-                            <Text style={[styles.remindButtonText, { color: colors.accent, marginLeft: 4 }]}>
+                            <Text style={[styles.remindButtonText, { color: '#25D366', marginLeft: 4 }]}>
                               {t('remind')}
                             </Text>
                           </TouchableOpacity>
@@ -1618,27 +1706,64 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   dayChip: {
-    width: 52,
-    paddingVertical: 7,
-    borderRadius: 12,
+    width: 50,
+    paddingVertical: 6,
+    borderRadius: 14,
     borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 6,
   },
   dowText: {
-    fontSize: 10,
+    fontSize: 9.5,
+    fontWeight: '600',
     textTransform: 'uppercase',
-    letterSpacing: 0.3,
+    letterSpacing: 0.5,
   },
   dateNumText: {
     fontSize: 15,
+    fontWeight: '700',
+    marginTop: 1,
+  },
+  dateHeading: {
+    fontSize: 13,
     fontWeight: '600',
-    marginTop: 2,
+    letterSpacing: 0.2,
+    marginBottom: 8,
   },
   countText: {
+    fontSize: 9.5,
+  },
+  countPill: {
+    minWidth: 16,
+    paddingHorizontal: 5,
+    borderRadius: 7,
+    marginTop: 2,
+    alignItems: 'center',
+  },
+  summaryRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 10,
+  },
+  summaryTile: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    justifyContent: 'space-between',
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingVertical: 7,
+    paddingHorizontal: 12,
+  },
+  summaryValue: {
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  summaryLabel: {
     fontSize: 9,
-    marginTop: 1,
+    fontWeight: '700',
+    letterSpacing: 0.8,
   },
   scrollContent: {
     paddingHorizontal: 16,
@@ -1664,12 +1789,12 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   list: {
-    gap: 10,
+    gap: 7,
   },
   swipeContainer: {
     position: 'relative',
     overflow: 'hidden',
-    borderRadius: radii.md,
+    borderRadius: 14,
   },
   revealedDeleteAction: {
     position: 'absolute',
@@ -1680,7 +1805,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#EF4444',
     justifyContent: 'center',
     alignItems: 'center',
-    borderRadius: radii.md,
+    borderRadius: 14,
   },
   revealedDeleteBtn: {
     justifyContent: 'center',
@@ -1696,34 +1821,41 @@ const styles = StyleSheet.create({
   },
   appointmentRow: {
     flexDirection: 'row',
-    gap: 11,
+    gap: 8,
   },
   timeColumn: {
-    width: 60,
+    width: 62,
     alignItems: 'flex-end',
-    paddingTop: 11,
+    paddingTop: 8,
   },
   timeText: {
-    fontSize: 11.5,
-    fontWeight: '600',
+    fontSize: 12.5,
+    fontWeight: '700',
+    letterSpacing: -0.1,
+  },
+  meridianText: {
+    fontSize: 9.5,
+    fontWeight: '700',
+    letterSpacing: 0.6,
   },
   durText: {
-    fontSize: 10,
-    marginTop: 2,
+    fontSize: 11,
+    marginTop: 4,
   },
   rail: {
-    width: 2,
-    borderRadius: 1,
+    width: 3,
+    borderRadius: 2,
   },
   card: {
     flex: 1,
-    paddingVertical: 11,
-    paddingHorizontal: 12,
-    borderRadius: radii.md,
+    paddingVertical: 8,
+    paddingHorizontal: 11,
+    borderRadius: 14,
+    borderWidth: 1,
   },
   cardHeader: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     justifyContent: 'space-between',
     gap: 8,
   },
@@ -1735,44 +1867,54 @@ const styles = StyleSheet.create({
   customerName: {
     flex: 1,
     fontSize: 14,
-    fontWeight: '500',
+    fontWeight: '700',
   },
   moreBtn: {
     padding: 3,
   },
   statusBadge: {
-    paddingHorizontal: 7,
+    paddingHorizontal: 8,
     paddingVertical: 2,
-    borderRadius: radii.sm,
+    borderRadius: radii.pill,
     borderWidth: 1,
   },
   statusBadgeText: {
     fontSize: 10.5,
-    fontWeight: '500',
+    fontWeight: '700',
+  },
+  serviceList: {
+    marginTop: 3,
+    gap: 1,
+  },
+  serviceLine: {
+    fontSize: 12,
+    lineHeight: 16,
   },
   serviceSub: {
-    fontSize: 11.5,
+    fontSize: 11,
     marginTop: 3,
   },
   actionsRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
-    marginTop: 9,
+    gap: 8,
+    marginTop: 6,
   },
   advanceButton: {
-    paddingVertical: 5,
-    paddingHorizontal: 10,
-    borderRadius: radii.sm,
+    paddingVertical: 4,
+    paddingHorizontal: 11,
+    borderRadius: radii.pill,
     borderWidth: 1,
   },
   advanceButtonText: {
-    fontSize: 12,
+    fontSize: 11.5,
     fontWeight: '500',
   },
   remindButton: {
-    paddingVertical: 5,
-    paddingHorizontal: 8,
+    paddingVertical: 4,
+    paddingHorizontal: 9,
+    borderRadius: radii.pill,
+    borderWidth: 1,
     flexDirection: 'row',
     alignItems: 'center',
   },
@@ -1784,7 +1926,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     right: 18,
     bottom: 24,
-    height: 48,
+    minHeight: 48,
     paddingHorizontal: 18,
     borderRadius: 14,
     borderWidth: 1,

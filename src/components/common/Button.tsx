@@ -136,7 +136,13 @@ export const Button = ({
       ) : (
         <>
           {icon}
-          {label ? <Text style={[getTextStyle(), labelStyle]}>{label}</Text> : children}
+          {label ? (
+            <Text style={[getTextStyle(), { flexShrink: 1, textAlign: 'center' }, labelStyle]} numberOfLines={2}>
+              {label}
+            </Text>
+          ) : (
+            children
+          )}
         </>
       )}
     </TouchableOpacity>

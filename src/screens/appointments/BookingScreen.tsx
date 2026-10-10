@@ -1,3 +1,4 @@
+import { findDuplicateService } from '../../utils/serviceName';
 import React, { useState, useMemo, useEffect } from 'react';
 import {
   View,
@@ -16,125 +17,35 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '../../theme/ThemeContext';
 import { useLanguage } from '../../i18n/LanguageContext';
 import { BackIcon, CheckIcon, SearchIcon, PlusIcon, UserPlusIcon, UsersIcon } from '../../components/common/SvgIcons';
-import { Customer, StaffMember, Service, Appointment } from '../../types/domain';
+import { Customer, StaffMember, Service, ServiceCategory, Appointment } from '../../types/domain';
 import { inr, inrFromMinor, getInitials } from '../../utils/format';
 import { radii, shadows } from '../../theme/spacing';
 import { Button } from '../../components/common/Button';
 import { QuickContactPickerModal } from '../../components/customers/QuickContactPickerModal';
 import { shopRepository } from '../../repositories/shopRepository';
 
-export function parseTimeToMinutes(timeStr: string): number | null {
-  if (!timeStr) return null;
-  const match12 = timeStr.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
-  if (match12) {
-    let h = parseInt(match12[1], 10);
-    const m = parseInt(match12[2], 10);
-    const meridian = match12[3].toUpperCase();
-    if (meridian === 'PM' && h < 12) h += 12;
-    if (meridian === 'AM' && h === 12) h = 0;
-    return h * 60 + m;
-  }
-  const match24 = timeStr.match(/^(\d{1,2}):(\d{2})$/);
-  if (match24) {
-    const h = parseInt(match24[1], 10);
-    const m = parseInt(match24[2], 10);
-    return h * 60 + m;
-  }
-  return null;
-}
+import type { BlockedSlot } from '../../services/bookingSlots';
+import {
+  generateTimeSlots,
+  findBlockedSlots,
+  formatDuration,
+  formatMinutesToAmPm,
+  DEFAULT_APPOINTMENT_MINUTES,
+} from '../../services/bookingSlots';
+import { toLocalDateStr } from '../../utils/dateUtils';
+import { getGlass } from '../../theme/glass';
+import { GlassBackdrop } from '../../components/common/GlassBackdrop';
+import { fmt, localeFor } from '../../i18n/format';
+import { orderServicesForQuickPick } from '../../services/servicePriority';
+import { FREE_SALES_LIMIT } from '../../utils/subscriptionUtils';
 
-export function formatMinutesToAmPm(totalMinutes: number): string {
-  let h = Math.floor(totalMinutes / 60);
-  const m = totalMinutes % 60;
-  const meridian = h >= 12 ? 'PM' : 'AM';
-  let h12 = h % 12;
-  if (h12 === 0) h12 = 12;
-  const hStr = h12 < 10 ? `0${h12}` : `${h12}`;
-  const mStr = m < 10 ? `0${m}` : `${m}`;
-  return `${hStr}:${mStr} ${meridian}`;
-}
-
-export const DEFAULT_ALL_TIME_SLOTS = [
-  { label: '09:30 AM', hour: 9, min: 30 },
-  { label: '10:00 AM', hour: 10, min: 0 },
-  { label: '10:30 AM', hour: 10, min: 30 },
-  { label: '11:00 AM', hour: 11, min: 0 },
-  { label: '11:30 AM', hour: 11, min: 30 },
-  { label: '12:00 PM', hour: 12, min: 0 },
-  { label: '12:30 PM', hour: 12, min: 30 },
-  { label: '01:00 PM', hour: 13, min: 0 },
-  { label: '02:00 PM', hour: 14, min: 0 },
-  { label: '02:30 PM', hour: 14, min: 30 },
-  { label: '03:00 PM', hour: 15, min: 0 },
-  { label: '03:30 PM', hour: 15, min: 30 },
-  { label: '04:00 PM', hour: 16, min: 0 },
-  { label: '04:30 PM', hour: 16, min: 30 },
-  { label: '05:00 PM', hour: 17, min: 0 },
-  { label: '05:30 PM', hour: 17, min: 30 },
-  { label: '06:00 PM', hour: 18, min: 0 },
-  { label: '06:30 PM', hour: 18, min: 30 },
-  { label: '07:00 PM', hour: 19, min: 0 },
-  { label: '07:30 PM', hour: 19, min: 30 },
-  { label: '08:00 PM', hour: 20, min: 0 },
-  { label: '08:30 PM', hour: 20, min: 30 },
-];
-
-export function generateTimeSlots(
-  startStr = '09:30 AM',
-  endStr = '08:30 PM'
-): { label: string; hour: number; min: number }[] {
-  const start = parseTimeToMinutes(startStr) ?? (9 * 60 + 30);
-  const end = parseTimeToMinutes(endStr) ?? (20 * 60 + 30);
-  if (end <= start) return DEFAULT_ALL_TIME_SLOTS;
-
-  const slots: { label: string; hour: number; min: number }[] = [];
-  let current = start;
-  while (current <= end) {
-    const hour = Math.floor(current / 60);
-    const min = current % 60;
-    const label = formatMinutesToAmPm(current);
-    slots.push({ label, hour, min });
-    current += 30;
-  }
-  return slots.length > 0 ? slots : DEFAULT_ALL_TIME_SLOTS;
-}
-
-function getSlotHourMin(timeStr?: string): { hour: number; min: number } | null {
-  if (!timeStr) return null;
-  const ampmMatch = timeStr.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
-  if (ampmMatch) {
-    let h = parseInt(ampmMatch[1], 10);
-    const m = parseInt(ampmMatch[2], 10);
-    const meridian = ampmMatch[3].toUpperCase();
-    if (meridian === 'PM' && h < 12) h += 12;
-    if (meridian === 'AM' && h === 12) h = 0;
-    return { hour: h, min: m };
-  }
-  const iso24Match = timeStr.match(/(?:T|\s)(\d{1,2}):(\d{2})/);
-  if (iso24Match) {
-    return { hour: parseInt(iso24Match[1], 10), min: parseInt(iso24Match[2], 10) };
-  }
-  const simpleMatch = timeStr.match(/^(\d{1,2}):(\d{2})/);
-  if (simpleMatch) {
-    let h = parseInt(simpleMatch[1], 10);
-    const m = parseInt(simpleMatch[2], 10);
-    if (h >= 1 && h <= 7) h += 12;
-    return { hour: h, min: m };
-  }
-  return null;
-}
-
-function getApptDateStr(appt: Appointment): string {
-  if (appt.starts_at) {
-    const m = appt.starts_at.match(/\d{4}-\d{2}-\d{2}/);
-    if (m) return m[0];
-  }
-  if (appt.created_at) {
-    const m = appt.created_at.match(/\d{4}-\d{2}-\d{2}/);
-    if (m) return m[0];
-  }
-  return '';
-}
+// Re-exported so existing imports from this screen keep working
+export {
+  parseTimeToMinutes,
+  formatMinutesToAmPm,
+  generateTimeSlots,
+  DEFAULT_ALL_TIME_SLOTS,
+} from '../../services/bookingSlots';
 
 interface BookingScreenProps {
   customers: Customer[];
@@ -142,8 +53,14 @@ interface BookingScreenProps {
   staff: StaffMember[];
   appointments?: Appointment[];
   initialCustomerId?: string | null;
+  initialServiceIds?: string[];
+  initialStaffIds?: string[];
+  /** The logged-in stylist's id (stylist sessions only): pre-selected as the stylist. */
+  defaultStaffId?: string | null;
   onBack: () => void;
   onAddNewCustomer?: (name: string, phone: string) => Promise<Customer>;
+  categories?: ServiceCategory[];
+  onAddNewService?: (category: string, name: string, priceRupees: number, durationMinutes: number) => Promise<Service>;
   onConfirmBooking: (booking: {
     customerName: string;
     customerId?: string | null;
@@ -152,6 +69,7 @@ interface BookingScreenProps {
     serviceId?: string | null;
     serviceIds?: string[];
     serviceQuantities?: Record<string, number>;
+    durationMinutes?: number;
     stylistName: string;
     stylistId?: string | null;
     stylistIds?: string[];
@@ -162,6 +80,8 @@ interface BookingScreenProps {
   }) => void;
   ownerName?: string;
   totalSalesCount?: number;
+  /** Free-plan sales limit for this salon */
+  freeSalesLimit?: number;
   isPro?: boolean;
   onUpgradePlan?: () => void;
 }
@@ -172,16 +92,27 @@ export const BookingScreen = ({
   staff,
   appointments = [],
   initialCustomerId,
+  initialServiceIds,
+  initialStaffIds,
+  defaultStaffId = null,
   ownerName = 'Owner',
   totalSalesCount = 0,
+  freeSalesLimit = FREE_SALES_LIMIT,
   isPro = false,
   onBack,
   onAddNewCustomer,
+  categories = [],
+  onAddNewService,
   onConfirmBooking,
   onUpgradePlan,
 }: BookingScreenProps) => {
   const { colors } = useTheme();
-  const { t } = useLanguage();
+  const glass = getGlass(colors.isDark);
+  const { t, language } = useLanguage();
+  const tf = (key: string, fallback: string, vars: Record<string, string | number> = {}) =>
+    fmt(t(key, fallback), vars);
+  const units = { min: t('unitMin', 'min'), hr: t('unitHr', 'hr') };
+  const fd = (minutes: number) => formatDuration(minutes, units);
 
   // Customer selection state
   const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(
@@ -193,6 +124,73 @@ export const BookingScreen = ({
   const [newClientName, setNewClientName] = useState('');
   const [newClientPhone, setNewClientPhone] = useState('');
   const [isContactPickerOpen, setIsContactPickerOpen] = useState(false);
+  const [isSavingClient, setIsSavingClient] = useState(false);
+
+  // Add-new-service sheet (saved to the price list)
+  const DURATION_CHOICES = [15, 30, 45, 60, 90];
+  const [isAddServiceOpen, setIsAddServiceOpen] = useState(false);
+  const [newSvcName, setNewSvcName] = useState('');
+  const [newSvcPrice, setNewSvcPrice] = useState('');
+  const [newSvcDuration, setNewSvcDuration] = useState(30);
+  const [newSvcCategory, setNewSvcCategory] = useState('');
+  const [newSvcErrors, setNewSvcErrors] = useState<{ name?: string; price?: string }>({});
+  const [isSavingService, setIsSavingService] = useState(false);
+  const [clientErrors, setClientErrors] = useState<{ name?: string; phone?: string }>({});
+  const [focusedClientField, setFocusedClientField] = useState<'name' | 'phone' | null>(null);
+
+  const orderedServices = useMemo(() => orderServicesForQuickPick(services), [services]);
+
+  const serviceCategoryNames = useMemo(() => {
+    const names = categories.map((c) => c.name).filter(Boolean);
+    return names.length > 0 ? names : ['Hair', 'Beard', 'Colour', 'Care', 'Packages'];
+  }, [categories]);
+
+  const openAddService = () => {
+    setNewSvcName('');
+    setNewSvcPrice('');
+    setNewSvcDuration(30);
+    setNewSvcCategory(serviceCategoryNames[serviceCategoryNames.length - 1]);
+    setNewSvcErrors({});
+    setIsAddServiceOpen(true);
+  };
+
+  const closeAddService = () => {
+    if (isSavingService) return;
+    setIsAddServiceOpen(false);
+  };
+
+  const handleSaveNewService = async () => {
+    if (isSavingService || !onAddNewService) return;
+    const errors: { name?: string; price?: string } = {};
+    const trimmed = newSvcName.trim();
+    if (!trimmed) errors.name = t('bkErrSvcName', 'Enter the service name');
+    else if (findDuplicateService(services, trimmed)) {
+      errors.name = t('bkErrSvcDup', 'This service is already in your price list');
+    }
+    const price = parseFloat(newSvcPrice);
+    if (!newSvcPrice.trim() || isNaN(price) || price < 0) errors.price = t('bkErrPrice', 'Enter a valid price');
+    setNewSvcErrors(errors);
+    if (errors.name || errors.price) return;
+
+    setIsSavingService(true);
+    try {
+      const created = await onAddNewService(newSvcCategory || serviceCategoryNames[0], trimmed, price, newSvcDuration);
+      // Select it right away
+      setSelectedServiceIds((prev) => (prev.includes(created.id) ? prev : [...prev, created.id]));
+      setServiceQuantities((prev) => ({ ...prev, [created.id]: 1 }));
+      setIsAddServiceOpen(false);
+    } catch (e: any) {
+      Alert.alert(t('bkSvcSaveFail', 'Could not save service'), e?.message || t('bkTryAgain', 'Please try again.'));
+    } finally {
+      setIsSavingService(false);
+    }
+  };
+
+  const closeAddClientModal = () => {
+    setIsAddClientModalOpen(false);
+    setClientErrors({});
+    setFocusedClientField(null);
+  };
   const [keyboardHeight, setKeyboardHeight] = useState(0);
 
   useEffect(() => {
@@ -238,34 +236,48 @@ export const BookingScreen = ({
   }, [bookingHours.startTime, bookingHours.endTime]);
 
   // Service multi-selection & Multi-quantity state (no services pre-selected)
-  const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>([]);
-  const [serviceQuantities, setServiceQuantities] = useState<Record<string, number>>({});
-  const [isServicesExpanded, setIsServicesExpanded] = useState(false);
+  const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>(initialServiceIds || []);
+  const [serviceQuantities, setServiceQuantities] = useState<Record<string, number>>(() =>
+    (initialServiceIds || []).reduce<Record<string, number>>((acc, id) => {
+      acc[id] = 1;
+      return acc;
+    }, {})
+  );
 
   // Stylist selection: can select 1 or 2 stylists, or "No Stylist (Owner)".
-  const [selectedStaffIds, setSelectedStaffIds] = useState<string[]>([]);
+  const [isServicesExpanded, setIsServicesExpanded] = useState(true);
+  const [selectedStaffIds, setSelectedStaffIds] = useState<string[]>(() => {
+    if (initialStaffIds && initialStaffIds.length > 0) return initialStaffIds;
+    return defaultStaffId && staff.some((s) => s.id === defaultStaffId && s.is_active !== false) ? [defaultStaffId] : [];
+  });
   const [isOwnerSelected, setIsOwnerSelected] = useState<boolean>(false);
 
-  // Date selection - strictly Today and future days (no past dates). null means nothing pre-selected.
-  const [selectedDayOffset, setSelectedDayOffset] = useState<number | null>(null);
+  // Date selection - yesterday (for back-dated entries), today and the next 13 days. Today is pre-selected.
+  const [selectedDayOffset, setSelectedDayOffset] = useState<number | null>(0);
   const [selectedSlot, setSelectedSlot] = useState<string | null>(null);
   const [sendConfirm, setSendConfirm] = useState(true);
 
-  // Generate next 14 days starting from Today
+  // Yesterday, then today and the next 13 days (offset is relative to today)
   const upcomingDays = useMemo(() => {
     const days: { offset: number; dateStr: string; dayLabel: string; dateNum: number; fullDate: Date }[] = [];
     const now = new Date();
-    for (let i = 0; i < 14; i++) {
+    for (let i = -1; i < 14; i++) {
       const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() + i);
-      const dayLabel = i === 0 ? t('today') : d.toLocaleDateString('en-US', { weekday: 'short' });
+      const dayLabel =
+        i === -1
+          ? t('yesterday', 'Yest.')
+          : i === 0
+          ? t('today')
+          : d.toLocaleDateString(localeFor(language), { weekday: 'short' });
       const dateNum = d.getDate();
-      const dateStr = d.toISOString().split('T')[0];
+      const dateStr = toLocalDateStr(d);
       days.push({ offset: i, dateStr, dayLabel, dateNum, fullDate: d });
     }
     return days;
-  }, [t]);
+  }, [t, language]);
 
-  const selectedDay = selectedDayOffset !== null ? upcomingDays[selectedDayOffset] : null;
+  const selectedDay =
+    selectedDayOffset !== null ? upcomingDays.find((d) => d.offset === selectedDayOffset) || null : null;
 
   // Check if slot has already passed if today is selected
   const now = new Date();
@@ -304,49 +316,38 @@ export const BookingScreen = ({
   }, [isOwnerSelected, selectedStaffMembers, ownerName]);
 
   const hasStylistSelection = isOwnerSelected || selectedStaffIds.length > 0;
+  // A logged-in stylist always books as themselves: no stylist choice is shown
+  const stylistLocked = Boolean(defaultStaffId) && staff.some((s) => s.id === defaultStaffId && s.is_active !== false);
 
-  // Booked slots map for the selected stylist(s) on the selected date (fast, zero lag)
+  // Total time the new booking needs (sum of service durations x quantity)
+  const totalDurationMinutes = useMemo(() => {
+    const total = services
+      .filter((sv) => selectedServiceIds.includes(sv.id))
+      .reduce((acc, sv) => acc + (sv.duration_minutes || 0) * (serviceQuantities[sv.id] || 1), 0);
+    return total > 0 ? total : DEFAULT_APPOINTMENT_MINUTES;
+  }, [services, selectedServiceIds, serviceQuantities]);
+
+  // Conflicts for every chosen person (named stylists and/or the owner), duration-aware
   const bookedSlotsMap = useMemo(() => {
-    const map = new Map<string, { appt: Appointment; stylistName: string }>();
-    if (!hasStylistSelection || !selectedDay || selectedStaffMembers.length === 0) return map;
-
-    const targetDate = selectedDay.dateStr;
-
-    for (const a of appointments) {
-      if (a.status === 'Cancelled' || a.status === 'Done') continue;
-      const matchedStylist = selectedStaffMembers.find(
-        (s) =>
-          a.staff_id === s.id ||
-          (a.staff_name && a.staff_name.toLowerCase().includes(s.name.trim().toLowerCase()))
-      );
-      if (!matchedStylist) continue;
-
-      const apptDate = getApptDateStr(a);
-      if (apptDate) {
-        if (apptDate !== targetDate) continue;
-      } else {
-        // If appointment does not have a date, check if created_at matches targetDate
-        const createdDate = a.created_at ? a.created_at.slice(0, 10) : '';
-        if (createdDate !== targetDate) continue;
-      }
-
-      const raw = (a.starts_at || '').toUpperCase();
-      const hm = getSlotHourMin(a.starts_at);
-
-      for (const sl of timeSlots) {
-        const cleanSlot = sl.label.toUpperCase();
-        const noLeadingZero = cleanSlot.replace(/^0/, '');
-        if (raw.includes(cleanSlot) || raw.includes(noLeadingZero)) {
-          map.set(sl.label, { appt: a, stylistName: matchedStylist.name });
-          break;
-        } else if (hm && hm.hour === sl.hour && hm.min === sl.min) {
-          map.set(sl.label, { appt: a, stylistName: matchedStylist.name });
-          break;
-        }
-      }
+    if (!hasStylistSelection || !selectedDay) {
+      return new Map<string, BlockedSlot>();
     }
-    return map;
-  }, [hasStylistSelection, isOwnerSelected, selectedDay, selectedStaffMembers, appointments, timeSlots]);
+    const people: { id: string | null; name: string }[] = selectedStaffMembers.map((m) => ({
+      id: m.id,
+      name: m.name,
+    }));
+    if (isOwnerSelected) people.push({ id: null, name: ownerName || 'Owner' });
+    return findBlockedSlots(appointments, people, selectedDay.dateStr, timeSlots, totalDurationMinutes);
+  }, [
+    hasStylistSelection,
+    isOwnerSelected,
+    ownerName,
+    selectedDay,
+    selectedStaffMembers,
+    appointments,
+    timeSlots,
+    totalDurationMinutes,
+  ]);
 
   // Deselect slot if it conflicts with a booked slot
   React.useEffect(() => {
@@ -380,40 +381,29 @@ export const BookingScreen = ({
     return selectedServiceIds.reduce((sum, id) => sum + (serviceQuantities[id] || 1), 0);
   }, [selectedServiceIds, serviceQuantities]);
 
-  // Repeated tapping increments quantity (1 -> 2 -> 3...)
-  const handleServicePress = (svcId: string) => {
-    setSelectedServiceIds((prev) => {
-      if (!prev.includes(svcId)) {
-        return [...prev, svcId];
-      }
-      return prev;
-    });
-    setServiceQuantities((prev) => ({
-      ...prev,
-      [svcId]: (prev[svcId] || 0) + 1,
-    }));
-  };
+  // Each tap adds one (1 tap = 1, 2 taps = 2 ...). After the max, the next tap removes it; long-press removes at once.
+  const MAX_SERVICE_QTY = 5;
 
-  const handleDecrementOrRemoveService = (svcId: string) => {
+  const removeService = (svcId: string) => {
+    setSelectedServiceIds((prev) => prev.filter((id) => id !== svcId));
     setServiceQuantities((prev) => {
-      const currentQty = prev[svcId] || 1;
-      if (currentQty > 1) {
-        return { ...prev, [svcId]: currentQty - 1 };
-      }
       const next = { ...prev };
       delete next[svcId];
       return next;
     });
-    setSelectedServiceIds((prev) => {
-      const currentQty = serviceQuantities[svcId] || 1;
-      if (currentQty > 1) {
-        return prev;
-      }
-      return prev.filter((id) => id !== svcId);
-    });
   };
 
-  const toggleService = handleServicePress;
+  const toggleService = (svcId: string) => {
+    const current = serviceQuantities[svcId] || 0;
+    if (current >= MAX_SERVICE_QTY) {
+      removeService(svcId);
+      return;
+    }
+    if (current === 0) {
+      setSelectedServiceIds((prev) => (prev.includes(svcId) ? prev : [...prev, svcId]));
+    }
+    setServiceQuantities((prev) => ({ ...prev, [svcId]: current + 1 }));
+  };
 
   // Categorised service groups
   const categoryGroups = useMemo(() => {
@@ -443,49 +433,53 @@ export const BookingScreen = ({
   }, [services]);
 
   const handleQuickAddClient = async () => {
-    if (!newClientName.trim()) {
-      Alert.alert('Name Required', 'Please enter customer name');
-      return;
-    }
+    if (isSavingClient) return;
+    const errors: { name?: string; phone?: string } = {};
+    if (!newClientName.trim()) errors.name = t('bkErrName', 'Please enter the customer name');
     const cleanPhone = newClientPhone.replace(/\D/g, '').slice(-10);
-    if (cleanPhone.length !== 10) {
-      Alert.alert('Invalid Mobile', 'Please enter a valid 10-digit mobile number');
-      return;
-    }
+    if (cleanPhone.length !== 10) errors.phone = t('bkErrPhone', 'Enter a valid 10-digit mobile number');
+    setClientErrors(errors);
+    if (errors.name || errors.phone) return;
 
     // Check if phone already belongs to an existing customer
     const existing = customers.find((c) => c.phone.replace(/\D/g, '').slice(-10) === cleanPhone);
     if (existing) {
       Alert.alert(
-        'Customer Already Exists',
-        `A customer with mobile +91 ${cleanPhone} already exists (${existing.name}). Selected existing customer.`
+        t('bkExistsTitle', 'Customer Already Exists'),
+        tf('bkExistsMsg', 'A customer with mobile +91 {phone} already exists ({name}). Selected existing customer.', {
+          phone: cleanPhone,
+          name: existing.name,
+        })
       );
       setSelectedCustomerId(existing.id);
-      setIsAddClientModalOpen(false);
+      closeAddClientModal();
       setNewClientName('');
       setNewClientPhone('');
       setCustomerSearch('');
       return;
     }
 
+    setIsSavingClient(true);
     try {
       if (onAddNewCustomer) {
         const created = await onAddNewCustomer(newClientName.trim(), cleanPhone);
         setSelectedCustomerId(created.id);
       }
-      setIsAddClientModalOpen(false);
+      closeAddClientModal();
       setNewClientName('');
       setNewClientPhone('');
       setCustomerSearch('');
     } catch (e: any) {
-      Alert.alert('Notice', e.message || 'Could not save customer');
+      Alert.alert(t('bkNotice', 'Notice'), e.message || t('bkSaveClientFail', 'Could not save customer'));
+    } finally {
+      setIsSavingClient(false);
     }
   };
 
   const isSelectedSlotLocked = Boolean(selectedSlot && bookedSlotsMap.has(selectedSlot));
 
+  // Client is optional: no client books as a walk-in
   const bookIncomplete =
-    !selectedCustomer ||
     selectedServices.length === 0 ||
     !hasStylistSelection ||
     selectedDayOffset === null ||
@@ -495,25 +489,13 @@ export const BookingScreen = ({
 
   const handleConfirm = () => {
     // 100-sales free limit check: appointments and billing require Pro after 100 sales
-    if (totalSalesCount >= 100 && !isPro) {
+    if (totalSalesCount >= freeSalesLimit && !isPro) {
       Alert.alert(
-        '100-Sales Limit Reached',
-        'You have completed the free limit of 100 sales on this salon account.\n\nPlease upgrade to Pro to continue booking appointments and creating bills.',
+        t('bkLimitTitle', '100-Sales Limit Reached').replace('100', String(freeSalesLimit)),
+        t('bkLimitMsg', 'You have completed the free limit of 100 sales on this salon account. Please upgrade to Pro to continue booking appointments and creating bills.').replace('100', String(freeSalesLimit)),
         [
-          { text: 'Upgrade to Pro', onPress: () => onUpgradePlan?.() },
-          { text: 'Cancel', style: 'cancel' },
-        ]
-      );
-      return;
-    }
-
-    if (!selectedCustomer) {
-      Alert.alert(
-        'Client Required',
-        'Please select or add a client for this appointment. Walk-in bookings are disabled.',
-        [
-          { text: '+ Add Client', onPress: () => setIsAddClientModalOpen(true) },
-          { text: 'Cancel', style: 'cancel' },
+          { text: t('bkUpgrade', 'Upgrade to Pro'), onPress: () => onUpgradePlan?.() },
+          { text: t('cancel', 'Cancel'), style: 'cancel' },
         ]
       );
       return;
@@ -521,13 +503,13 @@ export const BookingScreen = ({
 
     if (bookIncomplete || !selectedDay) return;
 
-    const custName = selectedCustomer.name;
-    const custPhone = selectedCustomer.phone;
+    const custName = selectedCustomer?.name || t('bkWalkIn', 'Walk-in');
+    const custPhone = selectedCustomer?.phone ?? null;
     const stylistName = combinedStylistName || (ownerName || 'Owner');
 
     onConfirmBooking({
       customerName: custName,
-      customerId: selectedCustomer.id,
+      customerId: selectedCustomer?.id ?? null,
       customerPhone: custPhone,
       serviceName: combinedServiceName,
       serviceId: selectedServiceIds[0] || null,
@@ -539,26 +521,26 @@ export const BookingScreen = ({
       slot: selectedSlot!,
       dateStr: selectedDay.dateStr,
       amountRupees: totalBookingRupees,
-      sendConfirm,
+      durationMinutes: totalDurationMinutes,
+      sendConfirm: sendConfirm && Boolean(selectedCustomer),
     });
   };
 
-  const ctaText = !selectedCustomer
-    ? 'Select Client'
-    : selectedServices.length === 0
+  const ctaText = selectedServices.length === 0
     ? t('selectServices')
     : !hasStylistSelection
-    ? 'Select Stylist'
+    ? t('bkCtaSelectStylist', 'Select Stylist')
     : selectedDayOffset === null || !selectedDay
-    ? 'Select Date'
+    ? t('bkCtaSelectDate', 'Select Date')
     : !selectedSlot
-    ? 'Select Time Slot'
+    ? t('bkCtaSelectSlot', 'Select Time Slot')
     : isSelectedSlotLocked
-    ? 'Slot Locked · Pick Another Slot'
+    ? t('bkCtaLocked', 'Slot Locked · Pick Another Slot')
     : `${t('confirmBooking')} · ${selectedDay.dayLabel} ${selectedSlot}`;
 
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.bg }]}>
+      <GlassBackdrop isDark={colors.isDark} />
       <View style={styles.topBar}>
         <Button variant="icon" onPress={onBack}>
           <BackIcon size={18} color={colors.text} />
@@ -572,6 +554,7 @@ export const BookingScreen = ({
           { paddingBottom: Math.max(140, keyboardHeight + 80) },
         ]}
         keyboardShouldPersistTaps="handled"
+        onScrollBeginDrag={() => setIsSearchFocused(false)}
         automaticallyAdjustKeyboardInsets={true}
         showsVerticalScrollIndicator={false}
       >
@@ -585,8 +568,8 @@ export const BookingScreen = ({
             style={[
               styles.customerSearchBox,
               {
-                backgroundColor: colors.surface,
-                borderColor: isSearchFocused ? colors.accent : colors.divider,
+                backgroundColor: glass.card.backgroundColor,
+                borderColor: isSearchFocused ? colors.accent : glass.card.borderColor,
                 flex: 1,
               },
             ]}
@@ -594,7 +577,7 @@ export const BookingScreen = ({
             <SearchIcon size={15} color={colors.textDim} />
             <TextInput
               style={[styles.customerSearchInput, { color: colors.text }]}
-              placeholder="Search client name or phone..."
+              placeholder={t('bkSearchClient', 'Search client name or phone...')}
               placeholderTextColor={colors.placeholder || colors.textDim}
               value={customerSearch}
               onChangeText={(txt) => {
@@ -618,8 +601,8 @@ export const BookingScreen = ({
             style={[
               styles.addClientBtn,
               {
-                backgroundColor: colors.surface,
-                borderColor: colors.divider,
+                backgroundColor: glass.card.backgroundColor,
+                borderColor: glass.card.borderColor,
               },
             ]}
           >
@@ -663,7 +646,7 @@ export const BookingScreen = ({
               onPress={() => setSelectedCustomerId(null)}
               style={styles.removeSelectedCustBtn}
             >
-              <Text style={{ color: colors.accent200, fontSize: 12 }}>✕ Deselect</Text>
+              <Text style={{ color: colors.accent200, fontSize: 12 }}>{t('bkDeselect', '✕ Deselect')}</Text>
             </TouchableOpacity>
           </View>
         )}
@@ -674,38 +657,44 @@ export const BookingScreen = ({
             style={[
               styles.searchDropdown,
               {
-                backgroundColor: colors.surface,
-                borderColor: colors.divider,
+                backgroundColor: glass.card.backgroundColor,
+                borderColor: glass.card.borderColor,
               },
             ]}
           >
-            {customerSearch.trim().length === 0 && (
-              <View
-                style={{
-                  paddingHorizontal: 12,
-                  paddingVertical: 7,
-                  borderBottomWidth: 1,
-                  borderBottomColor: colors.divider,
-                  backgroundColor: colors.accent + '15',
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
+            <View
+              style={{
+                paddingHorizontal: 12,
+                paddingVertical: 7,
+                borderBottomWidth: 1,
+                borderBottomColor: colors.divider,
+                backgroundColor: colors.accent + '15',
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+              }}
+            >
+              <Text style={{ fontSize: 11.5, fontWeight: '700', color: colors.accent }}>
+                {customerSearch.trim().length === 0
+                  ? tf('bkSelectClientCount', 'Select Client ({n} on file)', { n: customers.length })
+                  : tf('bkFound', '{n} found', { n: filteredCustomers.length })}
+              </Text>
+              <TouchableOpacity
+                onPress={() => {
+                  setIsSearchFocused(false);
+                  Keyboard.dismiss();
                 }}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
               >
-                <Text style={{ fontSize: 11.5, fontWeight: '700', color: colors.accent }}>
-                  Select Client ({customers.length} on file)
-                </Text>
-                <TouchableOpacity onPress={() => setIsSearchFocused(false)}>
-                  <Text style={{ fontSize: 11, color: colors.textDim }}>Close ✕</Text>
-                </TouchableOpacity>
-              </View>
-            )}
+                <Text style={{ fontSize: 11, color: colors.textDim }}>{t('bkClose', 'Close ✕')}</Text>
+              </TouchableOpacity>
+            </View>
             {filteredCustomers.length === 0 ? (
               <View style={{ padding: 14, alignItems: 'center' }}>
                 <Text style={{ color: colors.textDim, fontSize: 12.5 }}>
                   {customerSearch.trim().length > 0
-                    ? `No customer matching "${customerSearch}"`
-                    : 'No customers on file yet'}
+                    ? tf('bkNoMatch', 'No customer matching "{name}"', { name: customerSearch })
+                    : t('bkNoCustomers', 'No customers on file yet')}
                 </Text>
                 <TouchableOpacity
                   onPress={() => {
@@ -717,14 +706,14 @@ export const BookingScreen = ({
                 >
                   <Text style={{ color: colors.accent, fontSize: 12.5, fontWeight: '600' }}>
                     {customerSearch.trim().length > 0
-                      ? `+ Create "${customerSearch}"`
-                      : '+ Add new client'}
+                      ? tf('bkCreateName', '+ Create "{name}"', { name: customerSearch })
+                      : t('bkAddNewClient', '+ Add new client')}
                   </Text>
                 </TouchableOpacity>
               </View>
             ) : (
               <ScrollView
-                style={{ maxHeight: 220 }}
+                style={{ maxHeight: 170 }}
                 nestedScrollEnabled={true}
                 keyboardShouldPersistTaps="always"
                 showsVerticalScrollIndicator={true}
@@ -747,7 +736,29 @@ export const BookingScreen = ({
                 ))}
               </ScrollView>
             )}
+            {filteredCustomers.length > 0 && (
+              <TouchableOpacity
+                onPress={() => {
+                  setNewClientName(customerSearch);
+                  setIsAddClientModalOpen(true);
+                  setIsSearchFocused(false);
+                }}
+                style={{ paddingVertical: 10, alignItems: 'center', borderTopWidth: 1, borderTopColor: colors.divider }}
+              >
+                <Text style={{ color: colors.accent, fontSize: 12.5, fontWeight: '600' }}>
+                  {customerSearch.trim().length > 0
+                    ? tf('bkCreateName', '+ Create "{name}"', { name: customerSearch })
+                    : t('bkAddNewClient', '+ Add new client')}
+                </Text>
+              </TouchableOpacity>
+            )}
           </View>
+        )}
+
+        {!selectedCustomer && !isSearchFocused && (
+          <Text style={{ color: colors.textDim, fontSize: 11.5, marginTop: 6 }}>
+            {t('noClientHint', 'No client selected. You can still book it as a Walk-in.')}
+          </Text>
         )}
 
         {/* ======================================================== */}
@@ -756,141 +767,107 @@ export const BookingScreen = ({
         {/* ======================================================== */}
         {/* 2. CHOOSE SERVICES TRIGGER BOX                           */}
         {/* ======================================================== */}
-        <Text style={[styles.sectionLabel, { color: colors.textDim, marginTop: 18 }]}>
-          {t('services')} ({totalSelectedCount} {t('selected', 'selected')})
-        </Text>
-
         <TouchableOpacity
-          activeOpacity={0.8}
+          activeOpacity={0.7}
           onPress={() => setIsServicesExpanded((prev) => !prev)}
-          style={[
-            styles.chooseServicesBox,
-            {
-              backgroundColor: colors.surface,
-              borderColor: isServicesExpanded || selectedServiceIds.length > 0 ? colors.accent : colors.divider,
-            },
-          ]}
+          accessibilityLabel={isServicesExpanded ? t('bkCollapse', 'Collapse services') : t('bkExpand', 'Expand services')}
+          hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+          style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 18, marginBottom: 7 }}
         >
-          <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, gap: 10 }}>
-            <Text style={{ fontSize: 16 }}>✨</Text>
-            <View style={{ flex: 1 }}>
-              <Text style={[styles.chooseServicesTitle, { color: colors.text }]}>
-                {t('chooseServices', 'Choose Services')}
-              </Text>
-              <Text
-                style={[
-                  styles.chooseServicesSub,
-                  { color: selectedServiceIds.length > 0 ? colors.accent : colors.textDim },
-                ]}
-              >
-                {totalSelectedCount === 0
-                  ? 'Tap to select salon services'
-                  : `${totalSelectedCount} service${totalSelectedCount > 1 ? 's' : ''} selected`}
-              </Text>
-            </View>
-          </View>
+          <Text style={[styles.sectionLabel, { color: colors.textDim, marginBottom: 0 }]}>
+            {t('services')} ({totalSelectedCount} {t('selected', 'selected')})
+          </Text>
           <Text style={{ color: colors.accent, fontSize: 16, fontWeight: '700' }}>
             {isServicesExpanded ? '▲' : '▼'}
           </Text>
         </TouchableOpacity>
 
-        {/* Selected Services Preview Bar */}
-        {selectedServices.length > 0 && (
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginVertical: 8 }}>
-            {selectedServices.map((s) => {
-              const qty = serviceQuantities[s.id] || 1;
-              return (
-                <View
-                  key={`sel_${s.id}`}
-                  style={[styles.selectedServiceTag, { backgroundColor: colors.accent900, borderColor: colors.accent }]}
-                >
-                  <Text style={{ color: colors.accent100, fontSize: 12, fontWeight: '600' }}>
-                    {s.name} × {qty}
-                  </Text>
-                  <Text style={{ color: colors.accent200, fontSize: 11, marginLeft: 6 }}>
-                    {inrFromMinor(s.price_minor * qty)}
-                  </Text>
-                  <TouchableOpacity
-                    onPress={() => handleDecrementOrRemoveService(s.id)}
-                    style={{ marginLeft: 6, padding: 2 }}
-                    hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-                  >
-                    <Text style={{ color: colors.accent200, fontSize: 12, fontWeight: 'bold' }}>✕</Text>
-                  </TouchableOpacity>
-                </View>
-              );
-            })}
-          </ScrollView>
+        {!isServicesExpanded && (
+          <Text style={{ color: selectedServices.length > 0 ? colors.accent : colors.textDim, fontSize: 12.5, marginBottom: 8 }}>
+            {combinedServiceName || t('bkNoSvcSelected', 'No services selected')}
+          </Text>
         )}
 
-        {/* 3-COLUMN SQUARE GRID CONTAINER (Shown when expanded) */}
+        {/* Always-visible grid; selected cards get a - qty + stepper */}
         {isServicesExpanded && (
-          <View style={[styles.servicesGridContainer, { backgroundColor: colors.surface, borderColor: colors.divider }]}>
-            {services.length === 0 ? (
-              <View style={{ padding: 20, alignItems: 'center' }}>
-                <Text style={{ color: colors.textDim, fontSize: 13 }}>No services found. Add services in Prices & Offers.</Text>
-              </View>
-            ) : (
-              <View style={styles.threeColumnGrid}>
-                {services.map((s) => {
-                  const isSelected = selectedServiceIds.includes(s.id);
-                  const qty = serviceQuantities[s.id] || 0;
-                  return (
-                    <TouchableOpacity
-                      key={s.id}
-                      activeOpacity={0.75}
-                      onPress={() => handleServicePress(s.id)}
-                      style={[
-                        styles.squareServiceCard,
-                        {
-                          backgroundColor: isSelected ? colors.accent900 : colors.bg,
-                          borderColor: isSelected ? colors.accent : colors.divider,
-                        },
-                      ]}
-                    >
-                      <View
-                        style={[
-                          styles.cardCheckBadge,
-                          {
-                            backgroundColor: isSelected ? colors.accent : 'transparent',
-                            borderColor: isSelected ? colors.accent : colors.divider,
-                          },
-                        ]}
-                      >
-                        {isSelected && (
-                          <Text style={{ color: '#000', fontSize: 10, fontWeight: 'bold' }}>
-                            ×{qty}
-                          </Text>
-                        )}
+        <>
+        <Text style={{ color: colors.textDim, fontSize: 11, marginBottom: 6 }}>
+          {t('serviceTapHint', 'Tap once for 1, twice for 2 · hold to remove')}
+        </Text>
+        <View style={[styles.servicesGridContainer, glass.card]}>
+          {services.length === 0 ? (
+            <View style={{ paddingVertical: 10, alignItems: 'center' }}>
+              <Text style={{ color: colors.textDim, fontSize: 13 }}>{t('bkNoServices', 'No services yet. Tap + to add your first one.')}</Text>
+            </View>
+          ) : null}
+          {(
+            <View style={styles.threeColumnGrid}>
+              {orderedServices.map((s) => {
+                const qty = serviceQuantities[s.id] || 0;
+                const isSelected = selectedServiceIds.includes(s.id);
+                return (
+                  <TouchableOpacity
+                    key={s.id}
+                    activeOpacity={0.75}
+                    onPress={() => toggleService(s.id)}
+                    onLongPress={() => isSelected && removeService(s.id)}
+                    delayLongPress={350}
+                    accessibilityState={{ selected: isSelected }}
+                    style={[
+                      styles.squareServiceCard,
+                      {
+                        backgroundColor: isSelected ? colors.accent + '1F' : glass.pill.backgroundColor,
+                        borderColor: isSelected ? colors.accent : glass.card.borderColor,
+                        borderWidth: isSelected ? 1.5 : 1,
+                      },
+                    ]}
+                  >
+                    {isSelected ? (
+                      <View style={[styles.qtyBadge, { backgroundColor: colors.accent }]}>
+                        <Text style={{ color: '#161826', fontSize: 10.5, fontWeight: '800' }}>×{qty}</Text>
                       </View>
-                      <Text
-                        style={[
-                          styles.squareServiceName,
-                          { color: isSelected ? colors.accent100 : colors.text },
-                        ]}
-                        numberOfLines={2}
-                      >
-                        {s.name} {qty > 1 ? `× ${qty}` : ''}
-                      </Text>
-                      <Text
-                        style={[
-                          styles.squareServicePrice,
-                          { color: isSelected ? colors.accent : colors.textDim },
-                        ]}
-                      >
-                        {inrFromMinor(s.price_minor)}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-            )}
-          </View>
+                    ) : null}
+                    <Text
+                      style={[styles.squareServiceName, { color: isSelected ? colors.accent100 : colors.text }]}
+                      numberOfLines={2}
+                    >
+                      {s.name}
+                    </Text>
+                    <Text style={[styles.squareServicePrice, { color: isSelected ? colors.accent : colors.textDim }]}>
+                      {inrFromMinor(s.price_minor)}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+              {onAddNewService ? (
+                <TouchableOpacity
+                  activeOpacity={0.75}
+                  onPress={openAddService}
+                  accessibilityLabel="Add a new service to the price list"
+                  style={[
+                    styles.squareServiceCard,
+                    {
+                      borderStyle: 'dashed',
+                      borderColor: colors.accent,
+                      backgroundColor: colors.accent + '12',
+                    },
+                  ]}
+                >
+                  <PlusIcon size={18} color={colors.accent} />
+                  <Text style={{ color: colors.accent, fontSize: 11, fontWeight: '700', marginTop: 2 }}>{t('bkNew', 'New')}</Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
+          )}
+        </View>
+        </>
         )}
 
         {/* ======================================================== */}
         {/* 3. STYLIST (Single or Multiple Stylists)                 */}
         {/* ======================================================== */}
+        {!stylistLocked && (
+        <>
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 18 }}>
           <Text style={[styles.sectionLabel, { color: colors.textDim }]}>
             {t('staff')}
@@ -909,8 +886,8 @@ export const BookingScreen = ({
             style={[
               styles.chip,
               {
-                borderColor: isOwnerSelected ? colors.accent : colors.divider,
-                backgroundColor: isOwnerSelected ? colors.accent900 : 'transparent',
+                borderColor: isOwnerSelected ? colors.accent : glass.card.borderColor,
+                backgroundColor: isOwnerSelected ? colors.accent900 : glass.pill.backgroundColor,
               },
             ]}
           >
@@ -925,7 +902,7 @@ export const BookingScreen = ({
                 { color: isOwnerSelected ? colors.accent200 : colors.textMuted },
               ]}
             >
-              {ownerName || 'Owner'} (Owner)
+              {ownerName || 'Owner'} {t('bkOwnerTag', '(Owner)')}
             </Text>
           </TouchableOpacity>
 
@@ -947,8 +924,8 @@ export const BookingScreen = ({
                 style={[
                   styles.chip,
                   {
-                    borderColor: isSelected ? colors.accent : colors.divider,
-                    backgroundColor: isSelected ? colors.accent900 : 'transparent',
+                    borderColor: isSelected ? colors.accent : glass.card.borderColor,
+                    backgroundColor: isSelected ? colors.accent900 : glass.pill.backgroundColor,
                   },
                 ]}
               >
@@ -969,12 +946,14 @@ export const BookingScreen = ({
             );
           })}
         </ScrollView>
+        </>
+        )}
 
         {/* ======================================================== */}
         {/* 4. DATE SELECTION (No past dates! Starts from Today)     */}
         {/* ======================================================== */}
         <Text style={[styles.sectionLabel, { color: colors.textDim, marginTop: 18 }]}>
-          DATE · STRICTLY TODAY & FUTURE
+          {t('date', 'DATE').toUpperCase()}
         </Text>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.scrollRow}>
           {upcomingDays.map((d) => {
@@ -990,12 +969,14 @@ export const BookingScreen = ({
                 style={[
                   styles.dayChip,
                   {
-                    borderColor: isSelected ? colors.accent : colors.divider,
-                    backgroundColor: isSelected ? colors.accent900 : 'transparent',
+                    borderColor: isSelected ? colors.accent : glass.card.borderColor,
+                    backgroundColor: isSelected ? colors.accent900 : glass.pill.backgroundColor,
                   },
                 ]}
               >
                 <Text
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
                   style={[
                     styles.dowText,
                     { color: isSelected ? colors.accent200 : colors.textDim },
@@ -1020,19 +1001,32 @@ export const BookingScreen = ({
         {/* 5. TIME SLOTS (Conflict detection and locked styling)   */}
         {/* ======================================================== */}
         <Text style={[styles.sectionLabel, { color: colors.textDim, marginTop: 18 }]}>
-          {selectedDay ? `SLOT · ${selectedDay.dayLabel.toUpperCase()} ${selectedDay.dateNum}` : 'SLOT · SELECT DATE ABOVE'}
+          {selectedDay
+            ? tf('bkSlotFor', 'SLOT · {day} {n}', { day: selectedDay.dayLabel.toUpperCase(), n: selectedDay.dateNum })
+            : t('bkSlotSelectDate', 'SLOT · SELECT DATE ABOVE')}
         </Text>
+        {selectedDay && (
+          <Text style={{ color: colors.textMuted, fontSize: 11.5, marginBottom: 8 }}>
+            {tf('bkTakes', 'Takes {d}', { d: fd(totalDurationMinutes) })}
+            {selectedSlot
+              ? ` · ${selectedSlot} – ${(() => {
+                  const sl = timeSlots.find((x) => x.label === selectedSlot);
+                  return sl ? formatMinutesToAmPm(sl.hour * 60 + sl.min + totalDurationMinutes) : '';
+                })()}`
+              : ''}
+          </Text>
+        )}
 
         {!selectedDay ? (
-          <View style={{ padding: 18, alignItems: 'center', backgroundColor: colors.surface, borderRadius: radii.md, borderWidth: 1, borderColor: colors.divider, marginVertical: 8 }}>
+          <View style={{ padding: 18, alignItems: 'center', ...glass.card, borderRadius: radii.md, borderWidth: 1, marginVertical: 8 }}>
             <Text style={{ color: colors.textDim, fontSize: 13 }}>
-              Please select an appointment date above to view time slots.
+              {t('bkSelectDateMsg', 'Please select an appointment date above to view time slots.')}
             </Text>
           </View>
         ) : (
           <>
             {/* Stylist Active Booking Notice */}
-            {bookedSlotsMap.size > 0 && selectedStaffMembers.length > 0 && (
+            {bookedSlotsMap.size > 0 && hasStylistSelection && (
               <View
                 style={{
                   padding: 10,
@@ -1045,10 +1039,13 @@ export const BookingScreen = ({
                 }}
               >
                 <Text style={{ color: '#F87171', fontSize: 12.5, fontWeight: '700' }}>
-                  🔒 {combinedStylistName} booked at: {Array.from(bookedSlotsMap.keys()).join(', ')}
+                  {tf('bkBusyAt', '🔒 {who} busy at: {slots}', {
+                    who: combinedStylistName,
+                    slots: Array.from(bookedSlotsMap.entries()).filter(([, v]) => v.reason === 'booked').map(([k]) => k).join(', ') || '—',
+                  })}
                 </Text>
                 <Text style={{ color: colors.textMuted, fontSize: 11.5, marginTop: 2 }}>
-                  Booked slots are striked out. Please choose an open slot.
+                  {t('bkStruckNote', 'Struck-out slots are taken, or too short for the selected services. Please choose an open slot.')}
                 </Text>
               </View>
             )}
@@ -1076,9 +1073,20 @@ export const BookingScreen = ({
               if (isBooked) {
                 const bookedItem = bookedSlotsMap.get(sl.label);
                 Alert.alert(
-                  'Stylist Already Booked',
-                  `${bookedItem?.stylistName || combinedStylistName || 'Stylist'} is already booked at ${sl.label} on this date. Please choose another time slot or another stylist.`,
-                  [{ text: 'OK' }]
+                  bookedItem?.reason === 'overlap'
+                    ? t('bkAlertShortTitle', 'Not Enough Time')
+                    : t('bkAlertBookedTitle', 'Stylist Already Booked'),
+                  bookedItem?.reason === 'overlap'
+                    ? tf('bkAlertShortMsg', "{dur} from {slot} would run into {who}'s next booking. Please choose an earlier slot, another stylist or fewer services.", {
+                        dur: fd(totalDurationMinutes),
+                        slot: sl.label,
+                        who: bookedItem.stylistName,
+                      })
+                    : tf('bkAlertBookedMsg', '{who} is already booked at {slot} on this date. Please choose another time slot or another stylist.', {
+                        who: bookedItem?.stylistName || combinedStylistName || 'Stylist',
+                        slot: sl.label,
+                      }),
+                  [{ text: t('bkOk', 'OK') }]
                 );
                 return;
               }
@@ -1098,19 +1106,22 @@ export const BookingScreen = ({
                       ? colors.accent
                       : isBooked
                       ? 'rgba(239, 68, 68, 0.6)'
-                      : colors.divider,
+                      : glass.card.borderColor,
                     backgroundColor: isSelected
                       ? colors.accent900
                       : isBooked
                       ? 'rgba(239, 68, 68, 0.12)'
                       : isPast
                       ? colors.trackBg
-                      : colors.surface,
+                      : glass.card.backgroundColor,
                     opacity: isPast ? 0.35 : 1,
                   },
                 ]}
               >
                 <Text
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.8}
                   style={[
                     styles.slotText,
                     {
@@ -1136,7 +1147,7 @@ export const BookingScreen = ({
                       marginTop: 2,
                     }}
                   >
-                    Booked
+                    {bookedAppt?.reason === 'overlap' ? t('bkTooLong', 'Too long') : t('bkBooked', 'Booked')}
                   </Text>
                 )}
               </TouchableOpacity>
@@ -1149,22 +1160,22 @@ export const BookingScreen = ({
         {/* WhatsApp confirmation checkbox */}
         <TouchableOpacity
           activeOpacity={0.8}
-          onPress={() => setSendConfirm(!sendConfirm)}
-          style={styles.checkboxRow}
+          onPress={() => selectedCustomer && setSendConfirm(!sendConfirm)}
+          style={[styles.checkboxRow, { opacity: selectedCustomer ? 1 : 0.4 }]}
         >
           <View
             style={[
               styles.checkbox,
               {
-                borderColor: sendConfirm ? colors.accent : colors.divider,
-                backgroundColor: sendConfirm ? colors.accent : 'transparent',
+                borderColor: sendConfirm && selectedCustomer ? colors.accent : glass.card.borderColor,
+                backgroundColor: sendConfirm && selectedCustomer ? colors.accent : 'transparent',
               },
             ]}
           >
-            {sendConfirm ? <CheckIcon size={12} color="#161826" strokeWidth={3} /> : null}
+            {sendConfirm && selectedCustomer ? <CheckIcon size={12} color="#161826" strokeWidth={3} /> : null}
           </View>
           <Text style={[styles.checkboxLabel, { color: colors.textMuted }]}>
-            Send WhatsApp reminder to client with direct chat link
+            {t('bkWhatsapp', 'Send WhatsApp reminder to client with direct chat link (needs a client)')}
           </Text>
         </TouchableOpacity>
       </ScrollView>
@@ -1190,97 +1201,277 @@ export const BookingScreen = ({
       {/* ======================================================== */}
       {/* QUICK ADD CLIENT MODAL                                   */}
       {/* ======================================================== */}
+      {/* ADD NEW SERVICE (saved to the price list) */}
+      <Modal visible={isAddServiceOpen} animationType="slide" transparent onRequestClose={closeAddService}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
+          <View style={styles.sheetOverlay}>
+            <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={closeAddService} />
+            <ScrollView bounces={false} keyboardShouldPersistTaps="handled" contentContainerStyle={{ flexGrow: 1, justifyContent: 'flex-end' }}>
+              <View
+                style={[
+                  styles.sheetCard,
+                  { backgroundColor: colors.surface, borderColor: glass.card.borderColor, paddingBottom: keyboardHeight > 0 ? 16 : 28 },
+                ]}
+              >
+                <View style={[styles.sheetHandle, { backgroundColor: colors.divider }]} />
+                <View style={styles.sheetHeader}>
+                  <View style={[styles.sheetIconWrap, { backgroundColor: colors.accent + '22', borderColor: colors.accent + '55' }]}>
+                    <PlusIcon size={22} color={colors.accent} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.sheetTitle, { color: colors.text }]}>{t('bkAddService', 'Add New Service')}</Text>
+                    <Text style={{ color: colors.textDim, fontSize: 12, marginTop: 2 }}>{t('bkSavedToList', 'Saved to your price list')}</Text>
+                  </View>
+                  <TouchableOpacity
+                    onPress={closeAddService}
+                    style={[styles.sheetClose, { backgroundColor: glass.pill.backgroundColor, borderColor: glass.card.borderColor }]}
+                  >
+                    <Text style={{ color: colors.textDim, fontSize: 14 }}>✕</Text>
+                  </TouchableOpacity>
+                </View>
+
+                <Text style={[styles.fieldLabel, { color: colors.textDim }]}>{t('bkServiceName', 'SERVICE NAME')}</Text>
+                <TextInput
+                  style={[
+                    styles.sheetInput,
+                    { backgroundColor: colors.bg, color: colors.text, borderColor: newSvcErrors.name ? '#EF4444' : glass.card.borderColor },
+                  ]}
+                  placeholder={t('bkSvcPlaceholder', 'e.g. Groom package')}
+                  placeholderTextColor={colors.placeholder || colors.textDim}
+                  value={newSvcName}
+                  onChangeText={(txt) => {
+                    setNewSvcName(txt);
+                    if (newSvcErrors.name) setNewSvcErrors((e) => ({ ...e, name: undefined }));
+                  }}
+                  autoCapitalize="words"
+                  editable={!isSavingService}
+                />
+                {newSvcErrors.name ? <Text style={styles.fieldError}>{newSvcErrors.name}</Text> : null}
+
+                <Text style={[styles.fieldLabel, { color: colors.textDim, marginTop: 14 }]}>{t('bkPrice', 'PRICE')}</Text>
+                <View
+                  style={[
+                    styles.sheetPhoneRow,
+                    { backgroundColor: colors.bg, borderColor: newSvcErrors.price ? '#EF4444' : glass.card.borderColor },
+                  ]}
+                >
+                  <View style={[styles.sheetPrefix, { borderRightColor: glass.card.borderColor }]}>
+                    <Text style={{ color: colors.text, fontWeight: '600', fontSize: 14 }}>₹</Text>
+                  </View>
+                  <TextInput
+                    style={{ flex: 1, color: colors.text, fontSize: 15, paddingHorizontal: 12, alignSelf: 'stretch' }}
+                    placeholder="0"
+                    placeholderTextColor={colors.placeholder || colors.textDim}
+                    keyboardType="numeric"
+                    value={newSvcPrice}
+                    onChangeText={(txt) => {
+                      setNewSvcPrice(txt.replace(/[^0-9.]/g, ''));
+                      if (newSvcErrors.price) setNewSvcErrors((e) => ({ ...e, price: undefined }));
+                    }}
+                    editable={!isSavingService}
+                  />
+                </View>
+                {newSvcErrors.price ? <Text style={styles.fieldError}>{newSvcErrors.price}</Text> : null}
+
+                <Text style={[styles.fieldLabel, { color: colors.textDim, marginTop: 14 }]}>{t('bkDuration', 'DURATION')}</Text>
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+                  {DURATION_CHOICES.map((m) => {
+                    const on = newSvcDuration === m;
+                    return (
+                      <TouchableOpacity
+                        key={m}
+                        onPress={() => setNewSvcDuration(m)}
+                        activeOpacity={0.8}
+                        style={[
+                          styles.chip,
+                          {
+                            marginRight: 0,
+                            borderColor: on ? colors.accent : glass.card.borderColor,
+                            backgroundColor: on ? colors.accent + '22' : glass.pill.backgroundColor,
+                          },
+                        ]}
+                      >
+                        <Text style={[styles.chipText, { color: on ? colors.accent : colors.textMuted, fontWeight: on ? '700' : '500' }]}>
+                          {fd(m)}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+
+                <Text style={[styles.fieldLabel, { color: colors.textDim, marginTop: 14 }]}>{t('bkCategory', 'CATEGORY')}</Text>
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+                  {serviceCategoryNames.map((c) => {
+                    const on = newSvcCategory === c;
+                    return (
+                      <TouchableOpacity
+                        key={c}
+                        onPress={() => setNewSvcCategory(c)}
+                        activeOpacity={0.8}
+                        style={[
+                          styles.chip,
+                          {
+                            marginRight: 0,
+                            borderColor: on ? colors.accent : glass.card.borderColor,
+                            backgroundColor: on ? colors.accent + '22' : glass.pill.backgroundColor,
+                          },
+                        ]}
+                      >
+                        <Text style={[styles.chipText, { color: on ? colors.accent : colors.textMuted, fontWeight: on ? '700' : '500' }]}>
+                          {c}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+
+                <View style={{ marginTop: 20 }}>
+                  <Button label={t('bkSaveSelect', 'Save & Select')} block loading={isSavingService} disabled={isSavingService} onPress={handleSaveNewService} />
+                </View>
+              </View>
+            </ScrollView>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
       <Modal
         visible={isAddClientModalOpen}
         animationType="slide"
         transparent
-        onRequestClose={() => setIsAddClientModalOpen(false)}
+        onRequestClose={closeAddClientModal}
       >
         <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
           style={{ flex: 1 }}
         >
-          <View style={styles.modalOverlay}>
-            <TouchableOpacity
-              style={StyleSheet.absoluteFill}
-              activeOpacity={1}
-              onPress={() => setIsAddClientModalOpen(false)}
-            />
+          <View style={styles.sheetOverlay}>
+            <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={closeAddClientModal} />
             <ScrollView
-              contentContainerStyle={{ flexGrow: 1, justifyContent: 'center' }}
+              bounces={false}
               keyboardShouldPersistTaps="handled"
+              contentContainerStyle={{ flexGrow: 1, justifyContent: 'flex-end' }}
             >
-              <View style={[styles.modalCard, { backgroundColor: colors.surface, borderColor: colors.divider }]}>
-                <View style={styles.modalHeader}>
-                  <Text style={[styles.modalTitle, { color: colors.text }]}>{t('addNewCustomer')}</Text>
-                  <TouchableOpacity onPress={() => setIsAddClientModalOpen(false)}>
-                    <Text style={{ color: colors.textDim, fontSize: 16 }}>{t('cancel')}</Text>
+              <View
+                style={[
+                  styles.sheetCard,
+                  {
+                    backgroundColor: colors.surface,
+                    borderColor: glass.card.borderColor,
+                    paddingBottom: keyboardHeight > 0 ? 16 : 28,
+                  },
+                ]}
+              >
+                <View style={[styles.sheetHandle, { backgroundColor: colors.divider }]} />
+
+                <View style={styles.sheetHeader}>
+                  <View style={[styles.sheetIconWrap, { backgroundColor: colors.accent + '22', borderColor: colors.accent + '55' }]}>
+                    <UserPlusIcon size={22} color={colors.accent} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.sheetTitle, { color: colors.text }]}>{t('addNewCustomer')}</Text>
+                    <Text style={{ color: colors.textDim, fontSize: 12, marginTop: 2 }}>
+                      {t('bkClientSub', 'Save once, book faster every visit')}
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    onPress={closeAddClientModal}
+                    accessibilityLabel={t('cancel')}
+                    style={[styles.sheetClose, { backgroundColor: glass.pill.backgroundColor, borderColor: glass.card.borderColor }]}
+                  >
+                    <Text style={{ color: colors.textDim, fontSize: 14 }}>✕</Text>
                   </TouchableOpacity>
                 </View>
 
-                {/* Import from Phone Contacts Button */}
+                {/* Import from Phone Contacts */}
                 <TouchableOpacity
                   activeOpacity={0.8}
                   onPress={() => setIsContactPickerOpen(true)}
-                  style={{
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: 8,
-                    paddingVertical: 11,
-                    borderRadius: radii.md,
-                    borderWidth: 1,
-                    borderColor: colors.accent,
-                    backgroundColor: colors.accent + '15',
-                    marginTop: 10,
-                    marginBottom: 12,
-                  }}
+                  style={[styles.sheetImportBtn, { borderColor: colors.accent, backgroundColor: colors.accent + '14' }]}
                 >
-                  <UsersIcon size={16} color={colors.accent} />
-                  <Text style={{ color: colors.accent, fontWeight: '600', fontSize: 13 }}>
+                  <UsersIcon size={17} color={colors.accent} />
+                  <Text style={{ color: colors.accent, fontWeight: '700', fontSize: 13.5 }}>
                     {t('importFromContacts', 'Import from Phone Contacts')}
                   </Text>
                 </TouchableOpacity>
 
-                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginVertical: 14 }}>
                   <View style={{ flex: 1, height: 1, backgroundColor: colors.divider }} />
-                  <Text style={{ marginHorizontal: 8, color: colors.textDim, fontSize: 11, fontWeight: '600' }}>
-                    OR ENTER MANUALLY
+                  <Text style={{ marginHorizontal: 10, color: colors.textDim, fontSize: 10.5, fontWeight: '700', letterSpacing: 1 }}>
+                    {t('bkOrManual', 'OR ENTER MANUALLY')}
                   </Text>
                   <View style={{ flex: 1, height: 1, backgroundColor: colors.divider }} />
                 </View>
 
+                <Text style={[styles.fieldLabel, { color: colors.textDim }]}>{t('fullName', 'FULL NAME')}</Text>
                 <TextInput
                   style={[
-                    styles.modalInput,
-                    { backgroundColor: colors.bg, borderColor: colors.divider, color: colors.text },
+                    styles.sheetInput,
+                    {
+                      backgroundColor: colors.bg,
+                      color: colors.text,
+                      borderColor: clientErrors.name
+                        ? '#EF4444'
+                        : focusedClientField === 'name'
+                        ? colors.accent
+                        : glass.card.borderColor,
+                    },
                   ]}
                   placeholder={t('fullName')}
                   placeholderTextColor={colors.placeholder || colors.textDim}
                   value={newClientName}
-                  onChangeText={setNewClientName}
+                  onChangeText={(txt) => {
+                    setNewClientName(txt);
+                    if (clientErrors.name) setClientErrors((e) => ({ ...e, name: undefined }));
+                  }}
+                  onFocus={() => setFocusedClientField('name')}
+                  onBlur={() => setFocusedClientField(null)}
+                  autoCapitalize="words"
+                  returnKeyType="next"
+                  editable={!isSavingClient}
                 />
+                {clientErrors.name ? <Text style={styles.fieldError}>{clientErrors.name}</Text> : null}
 
-                <TextInput
+                <Text style={[styles.fieldLabel, { color: colors.textDim, marginTop: 14 }]}>{t('mobileNumber', 'MOBILE NUMBER')}</Text>
+                <View
                   style={[
-                    styles.modalInput,
-                    { backgroundColor: colors.bg, borderColor: colors.divider, color: colors.text, marginTop: 10 },
+                    styles.sheetPhoneRow,
+                    {
+                      backgroundColor: colors.bg,
+                      borderColor: clientErrors.phone
+                        ? '#EF4444'
+                        : focusedClientField === 'phone'
+                        ? colors.accent
+                        : glass.card.borderColor,
+                    },
                   ]}
-                  placeholder={t('mobileNumber')}
-                  placeholderTextColor={colors.placeholder || colors.textDim}
-                  keyboardType="phone-pad"
-                  maxLength={10}
-                  value={newClientPhone}
-                  onChangeText={(txt) => setNewClientPhone(txt.replace(/\D/g, '').slice(0, 10))}
-                />
-
-                <TouchableOpacity
-                  activeOpacity={0.8}
-                  onPress={handleQuickAddClient}
-                  style={[styles.modalAddBtn, { backgroundColor: colors.accent }]}
                 >
-                  <Text style={{ color: '#000', fontWeight: '600', fontSize: 14 }}>{t('save')}</Text>
-                </TouchableOpacity>
+                  <View style={[styles.sheetPrefix, { borderRightColor: glass.card.borderColor }]}>
+                    <Text style={{ color: colors.text, fontWeight: '600', fontSize: 14 }}>+91</Text>
+                  </View>
+                  <TextInput
+                    style={{ flex: 1, color: colors.text, fontSize: 15, paddingHorizontal: 12, alignSelf: 'stretch' }}
+                    placeholder={t('mobileNumber')}
+                    placeholderTextColor={colors.placeholder || colors.textDim}
+                    keyboardType="phone-pad"
+                    maxLength={10}
+                    value={newClientPhone}
+                    onChangeText={(txt) => {
+                      setNewClientPhone(txt.replace(/\D/g, '').slice(0, 10));
+                      if (clientErrors.phone) setClientErrors((e) => ({ ...e, phone: undefined }));
+                    }}
+                    onFocus={() => setFocusedClientField('phone')}
+                    onBlur={() => setFocusedClientField(null)}
+                    editable={!isSavingClient}
+                  />
+                  <Text style={{ color: newClientPhone.length === 10 ? colors.accent : colors.textDim, fontSize: 11.5, paddingRight: 12 }}>
+                    {newClientPhone.length}/10
+                  </Text>
+                </View>
+                {clientErrors.phone ? <Text style={styles.fieldError}>{clientErrors.phone}</Text> : null}
+
+                <View style={{ marginTop: 20 }}>
+                  <Button label={t('save')} block loading={isSavingClient} disabled={isSavingClient} onPress={handleQuickAddClient} />
+                </View>
               </View>
             </ScrollView>
           </View>
@@ -1295,8 +1486,11 @@ export const BookingScreen = ({
         onSelectContact={async ({ name, phone, existingCustomer }) => {
           if (existingCustomer) {
             Alert.alert(
-              'Customer Already Exists',
-              `"${existingCustomer.name}" is already registered with mobile number +91 ${phone}. Selected existing customer.`
+              t('bkExistsTitle', 'Customer Already Exists'),
+              tf('bkCustExistsShort', '"{name}" is already registered with mobile number +91 {phone}. Selected existing customer.', {
+                name: existingCustomer.name,
+                phone,
+              })
             );
             setSelectedCustomerId(existingCustomer.id);
             setIsContactPickerOpen(false);
@@ -1313,7 +1507,7 @@ export const BookingScreen = ({
             setIsContactPickerOpen(false);
             setIsAddClientModalOpen(false);
             setCustomerSearch('');
-            Alert.alert('Customer Imported', `${name} registered and selected!`);
+            Alert.alert(t('bkImportedTitle', 'Customer Imported'), tf('bkImportedMsg', '{name} registered and selected!', { name }));
           } catch (err: any) {
             Alert.alert('Error', err.message || 'Could not import contact');
           }
@@ -1358,7 +1552,7 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    height: 40,
+    minHeight: 40,
     borderRadius: radii.md,
     borderWidth: 1,
     paddingHorizontal: 10,
@@ -1369,7 +1563,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
   },
   walkInBtn: {
-    height: 40,
+    minHeight: 40,
     paddingHorizontal: 12,
     borderRadius: radii.md,
     borderWidth: 1,
@@ -1531,6 +1725,92 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     borderTopWidth: 1,
   },
+  sheetOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.65)',
+  },
+  sheetCard: {
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    borderWidth: 1,
+    borderBottomWidth: 0,
+    paddingHorizontal: 20,
+    paddingTop: 10,
+  },
+  sheetHandle: {
+    alignSelf: 'center',
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    marginBottom: 16,
+  },
+  sheetHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginBottom: 18,
+  },
+  sheetIconWrap: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  sheetTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+  },
+  sheetClose: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  sheetImportBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    minHeight: 48,
+    borderRadius: radii.md,
+    borderWidth: 1,
+  },
+  fieldLabel: {
+    fontSize: 10.5,
+    fontWeight: '700',
+    letterSpacing: 1,
+    marginBottom: 6,
+  },
+  sheetInput: {
+    minHeight: 50,
+    borderRadius: radii.md,
+    borderWidth: 1.5,
+    paddingHorizontal: 14,
+    fontSize: 15,
+  },
+  sheetPhoneRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    minHeight: 50,
+    borderRadius: radii.md,
+    borderWidth: 1.5,
+    overflow: 'hidden',
+  },
+  sheetPrefix: {
+    alignSelf: 'stretch',
+    paddingHorizontal: 14,
+    justifyContent: 'center',
+    borderRightWidth: 1,
+  },
+  fieldError: {
+    color: '#EF4444',
+    fontSize: 11.5,
+    marginTop: 5,
+  },
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.7)',
@@ -1553,7 +1833,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   modalInput: {
-    height: 44,
+    minHeight: 44,
     borderRadius: radii.md,
     borderWidth: 1,
     paddingHorizontal: 12,
@@ -1561,7 +1841,7 @@ const styles = StyleSheet.create({
   },
   modalAddBtn: {
     marginTop: 14,
-    height: 44,
+    minHeight: 44,
     borderRadius: radii.md,
     alignItems: 'center',
     justifyContent: 'center',
@@ -1599,17 +1879,30 @@ const styles = StyleSheet.create({
   threeColumnGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 8,
+    gap: 6,
   },
   squareServiceCard: {
-    width: '31.3%',
-    aspectRatio: 1,
+    width: '31.5%',
     borderRadius: radii.md,
     borderWidth: 1,
-    padding: 8,
-    justifyContent: 'space-between',
+    paddingHorizontal: 6,
+    paddingTop: 8,
+    paddingBottom: 6,
+    justifyContent: 'center',
     alignItems: 'center',
     position: 'relative',
+    minHeight: 58,
+  },
+  qtyBadge: {
+    position: 'absolute',
+    top: 4,
+    right: 4,
+    minWidth: 22,
+    height: 16,
+    paddingHorizontal: 4,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   cardCheckBadge: {
     position: 'absolute',
@@ -1623,11 +1916,11 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   squareServiceName: {
-    fontSize: 12,
+    fontSize: 11.5,
     fontWeight: '600',
     textAlign: 'center',
-    marginTop: 14,
-    lineHeight: 15,
+    marginTop: 0,
+    lineHeight: 14,
   },
   squareServicePrice: {
     fontSize: 11.5,

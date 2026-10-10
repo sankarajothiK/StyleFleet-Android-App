@@ -16,11 +16,18 @@ import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import * as FileSystem from 'expo-file-system/legacy';
 import { useTheme } from '../../theme/ThemeContext';
+import { GlassBackdrop } from '../../components/common/GlassBackdrop';
+import { getGlass } from '../../theme/glass';
 import { useLanguage } from '../../i18n/LanguageContext';
 import { Bill, Expense, StaffMember, Appointment, Customer } from '../../types/domain';
 import { inrFromMinor } from '../../utils/format';
 import { BackIcon, PdfIcon, ExcelIcon, LockIcon } from '../../components/common/SvgIcons';
 import { radii } from '../../theme/spacing';
+import { SalesSummaryView } from '../../components/reports/SalesSummaryView';
+import { countsInProfit, splitExpenseTotals } from '../../utils/expenseProfit';
+import { stylistNameFor } from '../../utils/expenseStylist';
+import { fmt } from '../../i18n/format';
+import { FREE_SALES_LIMIT } from '../../utils/subscriptionUtils';
 
 export const getBillTimestamp = (b: Bill | null | undefined): number => {
   if (!b) return 0;
@@ -93,6 +100,8 @@ interface ReportsScreenProps {
   shopGstin?: string;
   isPro?: boolean;
   totalSalesCount?: number;
+  /** Free-plan sales limit for this salon */
+  freeSalesLimit?: number;
   onUpgradePlan?: () => void;
   onRefresh?: () => Promise<void>;
   onBack: () => void;
@@ -139,6 +148,7 @@ export const ReportsScreen: React.FC<ReportsScreenProps> = ({
   shopGstin = '',
   isPro = false,
   totalSalesCount = 0,
+  freeSalesLimit = FREE_SALES_LIMIT,
   onUpgradePlan,
   onRefresh,
   onBack,
@@ -147,6 +157,7 @@ export const ReportsScreen: React.FC<ReportsScreenProps> = ({
   const { t } = useLanguage();
 
   const [period, setPeriod] = useState<ReportPeriod>('Day');
+  const [reportView, setReportView] = useState<'report' | 'summary'>('report');
   const [isExportingPdf, setIsExportingPdf] = useState(false);
   const [isExportingCsv, setIsExportingCsv] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -168,7 +179,7 @@ export const ReportsScreen: React.FC<ReportsScreenProps> = ({
     }
   };
 
-  const isReportDownloadLocked = !isPro && totalSalesCount >= 100;
+  const isReportDownloadLocked = !isPro && totalSalesCount >= freeSalesLimit;
 
   // Custom date range state (YYYY-MM-DD)
   const [customStart, setCustomStart] = useState(() => {
@@ -322,7 +333,10 @@ export const ReportsScreen: React.FC<ReportsScreenProps> = ({
         .filter(Boolean)
     ).size;
 
-    const totalExpensesMinor = filteredExpenses.reduce((acc, e) => acc + (e.amount_minor || 0), 0);
+    // Profit only subtracts expenses the owner chose to count; the rest are shown separately.
+    const expenseSplit = splitExpenseTotals(filteredExpenses);
+    const totalExpensesMinor = expenseSplit.countedMinor;
+    const excludedExpensesMinor = expenseSplit.excludedMinor;
     const expensesCount = filteredExpenses.length;
     const apptsCount = filteredAppointments.length;
 
@@ -336,6 +350,7 @@ export const ReportsScreen: React.FC<ReportsScreenProps> = ({
       billsCount,
       uniqueCusts,
       totalExpensesMinor,
+      excludedExpensesMinor,
       expensesCount,
       apptsCount,
       netProfitMinor,
@@ -624,6 +639,7 @@ export const ReportsScreen: React.FC<ReportsScreenProps> = ({
     }
 
     for (const ex of filteredExpenses) {
+      if (!countsInProfit(ex)) continue;
       const t = getExpenseTimestamp(ex);
       if (!t) continue;
       const { dateKey, displayDate } = getLocalDateKey(t);
@@ -811,6 +827,14 @@ export const ReportsScreen: React.FC<ReportsScreenProps> = ({
       <div class="kpi-label">Total Expenses</div>
       <div class="kpi-val">${inrFromMinor(metrics.totalExpensesMinor)}</div>
     </div>
+    ${
+      metrics.excludedExpensesMinor > 0
+        ? `<div class="kpi-card">
+      <div class="kpi-label">Not Counted in Profit</div>
+      <div class="kpi-val">${inrFromMinor(metrics.excludedExpensesMinor)}</div>
+    </div>`
+        : ''
+    }
     <div class="kpi-card">
       <div class="kpi-label">Total Bills</div>
       <div class="kpi-val">${metrics.billsCount}</div>
@@ -1090,7 +1114,8 @@ export const ReportsScreen: React.FC<ReportsScreenProps> = ({
       rows.push(`"Total Sales Revenue","${(metrics.totalSalesMinor / 100).toFixed(2)}"`);
       rows.push(`"Total Paid / Collected","${(metrics.paidAmountMinor / 100).toFixed(2)}"`);
       rows.push(`"Outstanding Dues","${(metrics.dueAmountMinor / 100).toFixed(2)}"`);
-      rows.push(`"Total Expenses","${(metrics.totalExpensesMinor / 100).toFixed(2)}"`);
+      rows.push(`"Total Expenses (counted in profit)","${(metrics.totalExpensesMinor / 100).toFixed(2)}"`);
+      rows.push(`"Expenses Not Counted in Profit","${(metrics.excludedExpensesMinor / 100).toFixed(2)}"`);
       rows.push(`"Net Profit","${(metrics.netProfitMinor / 100).toFixed(2)}"`);
       rows.push(`"Profit Margin","${metrics.marginPct}%"`);
       rows.push(`"Total Bills Count","${metrics.billsCount}"`);
@@ -1156,13 +1181,13 @@ export const ReportsScreen: React.FC<ReportsScreenProps> = ({
 
       // Expenses Table
       rows.push(`"EXPENSES DETAIL"`);
-      rows.push(`"Date","Category","Description","Amount (INR)"`);
+      rows.push(`"Date","Category","Description","Stylist","Amount (INR)","Counted in Profit"`);
       for (const ex of filteredExpenses) {
         const d = getExpenseTimestamp(ex) ? new Date(getExpenseTimestamp(ex)).toLocaleDateString('en-IN') : 'N/A';
         const catName = ex.category_name || (ex as any).category || 'Expense';
         const note = ex.note || (ex as any).description || '';
         rows.push(
-          `"${d}","${catName.replace(/"/g, '""')}","${note.replace(/"/g, '""')}","${(ex.amount_minor / 100).toFixed(2)}"`
+          `"${d}","${catName.replace(/"/g, '""')}","${note.replace(/"/g, '""')}","${(stylistNameFor(staff, ex.staff_id) || '').replace(/"/g, '""')}","${(ex.amount_minor / 100).toFixed(2)}","${countsInProfit(ex) ? 'Yes' : 'No'}"`
         );
       }
 
@@ -1195,6 +1220,7 @@ export const ReportsScreen: React.FC<ReportsScreenProps> = ({
 
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.bg }]}>
+      <GlassBackdrop isDark={colors.isDark} />
       {/* Top Header */}
       <View style={[styles.header, { borderBottomColor: colors.divider }]}>
         <TouchableOpacity onPress={onBack} style={styles.backBtn} activeOpacity={0.7}>
@@ -1220,6 +1246,36 @@ export const ReportsScreen: React.FC<ReportsScreenProps> = ({
           ) : undefined
         }
       >
+        {/* Report | Summary switch */}
+        <View style={[styles.viewSwitch, getGlass(colors.isDark).inset, { borderWidth: 1 }]}>
+          {(['report', 'summary'] as const).map((v) => {
+            const active = reportView === v;
+            return (
+              <TouchableOpacity
+                key={v}
+                activeOpacity={0.85}
+                onPress={() => setReportView(v)}
+                accessibilityRole="tab"
+                accessibilityState={{ selected: active }}
+                style={[styles.viewSwitchBtn, active && { backgroundColor: colors.accent }]}
+              >
+                <Text style={{ color: active ? '#0D0E11' : colors.textDim, fontWeight: '800', fontSize: 13 }}>
+                  {v === 'report' ? t('smTabReport', 'Report') : t('smTabSummary', 'Summary')}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+
+        {reportView === 'summary' ? (
+          <SalesSummaryView
+            bills={bills}
+            shopName={shopName}
+            isDownloadLocked={isReportDownloadLocked}
+            onUpgradePlan={onUpgradePlan}
+          />
+        ) : (
+          <>
         {/* Period Selector Tabs */}
         <View style={[styles.periodTabsRow, { borderColor: colors.divider }]}>
           {(['Day', 'Week', 'Month', 'Custom'] as const).map((p) => {
@@ -1260,7 +1316,7 @@ export const ReportsScreen: React.FC<ReportsScreenProps> = ({
         {/* Export Buttons Bar */}
         <View style={styles.exportBar}>
           <TouchableOpacity
-            style={[styles.exportBtn, { backgroundColor: colors.surface, borderColor: colors.divider }]}
+            style={[styles.exportBtn, { ...getGlass(colors.isDark).card, borderWidth: 1 }]}
             activeOpacity={0.8}
             onPress={handleExportPdf}
             disabled={isExportingPdf || isExportingCsv}
@@ -1280,7 +1336,7 @@ export const ReportsScreen: React.FC<ReportsScreenProps> = ({
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={[styles.exportBtn, { backgroundColor: colors.surface, borderColor: colors.divider }]}
+            style={[styles.exportBtn, { ...getGlass(colors.isDark).card, borderWidth: 1 }]}
             activeOpacity={0.8}
             onPress={handleExportCsv}
             disabled={isExportingPdf || isExportingCsv}
@@ -1301,7 +1357,7 @@ export const ReportsScreen: React.FC<ReportsScreenProps> = ({
         </View>
 
         {/* Net Profit Big Banner */}
-        <View style={[styles.netProfitCard, { backgroundColor: colors.surface, borderColor: colors.divider }]}>
+        <View style={[styles.netProfitCard, { ...getGlass(colors.isDark).card, borderWidth: 1 }]}>
           <View style={{ flex: 1 }}>
             <Text style={[styles.kpiLabel, { color: colors.textDim }]}>{t('netProfit', 'NET PROFIT')}</Text>
             <Text
@@ -1322,19 +1378,19 @@ export const ReportsScreen: React.FC<ReportsScreenProps> = ({
 
         {/* 2x2 Metric Grid */}
         <View style={styles.metricGrid}>
-          <View style={[styles.metricCard, { backgroundColor: colors.surface, borderColor: colors.divider }]}>
+          <View style={[styles.metricCard, { ...getGlass(colors.isDark).card, borderWidth: 1 }]}>
             <Text style={[styles.metricLabel, { color: colors.textDim }]}>{t('totalSales', 'Total Sales')}</Text>
             <Text style={[styles.metricValue, { color: colors.text }]}>{inrFromMinor(metrics.totalSalesMinor)}</Text>
             <Text style={[styles.metricSub, { color: colors.textMuted }]}>{metrics.billsCount} bills</Text>
           </View>
 
-          <View style={[styles.metricCard, { backgroundColor: colors.surface, borderColor: colors.divider }]}>
+          <View style={[styles.metricCard, { ...getGlass(colors.isDark).card, borderWidth: 1 }]}>
             <Text style={[styles.metricLabel, { color: colors.textDim }]}>{t('collected', 'Collected')}</Text>
             <Text style={[styles.metricValue, { color: '#22C55E' }]}>{inrFromMinor(metrics.paidAmountMinor)}</Text>
             <Text style={[styles.metricSub, { color: colors.textMuted }]}>{metrics.uniqueCusts} clients</Text>
           </View>
 
-          <View style={[styles.metricCard, { backgroundColor: colors.surface, borderColor: colors.divider }]}>
+          <View style={[styles.metricCard, { ...getGlass(colors.isDark).card, borderWidth: 1 }]}>
             <Text style={[styles.metricLabel, { color: colors.textDim }]}>{t('outstandingDues', 'Outstanding Dues')}</Text>
             <Text style={[styles.metricValue, { color: metrics.dueAmountMinor > 0 ? colors.error : colors.text }]}>
               {inrFromMinor(metrics.dueAmountMinor)}
@@ -1342,15 +1398,20 @@ export const ReportsScreen: React.FC<ReportsScreenProps> = ({
             <Text style={[styles.metricSub, { color: colors.textMuted }]}>Pending collection</Text>
           </View>
 
-          <View style={[styles.metricCard, { backgroundColor: colors.surface, borderColor: colors.divider }]}>
+          <View style={[styles.metricCard, { ...getGlass(colors.isDark).card, borderWidth: 1 }]}>
             <Text style={[styles.metricLabel, { color: colors.textDim }]}>{t('expenses', 'Expenses')}</Text>
             <Text style={[styles.metricValue, { color: colors.error }]}>{inrFromMinor(metrics.totalExpensesMinor)}</Text>
-            <Text style={[styles.metricSub, { color: colors.textMuted }]}>{metrics.expensesCount} entries</Text>
+            <Text style={[styles.metricSub, { color: colors.textMuted }]}>
+              {metrics.expensesCount} entries
+              {metrics.excludedExpensesMinor > 0
+                ? ` · ${fmt(t('exNotCounted', '{amt} not counted in profit'), { amt: inrFromMinor(metrics.excludedExpensesMinor) })}`
+                : ''}
+            </Text>
           </View>
         </View>
 
         {/* Payment Summary Breakdown Card */}
-        <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.divider, marginBottom: 16 }]}>
+        <View style={[styles.card, { ...getGlass(colors.isDark).card, borderWidth: 1, marginBottom: 16 }]}>
           <View style={styles.cardHeaderRow}>
             <View>
               <Text style={[styles.cardTitle, { color: colors.text }]}>Payment Summary</Text>
@@ -1388,7 +1449,7 @@ export const ReportsScreen: React.FC<ReportsScreenProps> = ({
         </View>
 
         {/* Day-Wise Sales & Financial Breakdown Card */}
-        <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.divider }]}>
+        <View style={[styles.card, { ...getGlass(colors.isDark).card, borderWidth: 1 }]}>
           <View style={styles.cardHeaderRow}>
             <View>
               <Text style={[styles.cardTitle, { color: colors.text }]}>
@@ -1439,7 +1500,7 @@ export const ReportsScreen: React.FC<ReportsScreenProps> = ({
         </View>
 
         {/* Stylist Performance Card */}
-        <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.divider }]}>
+        <View style={[styles.card, { ...getGlass(colors.isDark).card, borderWidth: 1 }]}>
           <View style={styles.cardHeaderRow}>
             <Text style={[styles.cardTitle, { color: colors.text }]}>
               {t('stylistPerformance', 'Stylist Performance')}
@@ -1480,7 +1541,7 @@ export const ReportsScreen: React.FC<ReportsScreenProps> = ({
         </View>
 
         {/* Service Performance Card */}
-        <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.divider }]}>
+        <View style={[styles.card, { ...getGlass(colors.isDark).card, borderWidth: 1 }]}>
           <View style={styles.cardHeaderRow}>
             <View>
               <Text style={[styles.cardTitle, { color: colors.text }]}>
@@ -1524,6 +1585,8 @@ export const ReportsScreen: React.FC<ReportsScreenProps> = ({
             ))
           )}
         </View>
+          </>
+        )}
       </ScrollView>
 
       {/* Custom Date Range Modal */}
@@ -1609,6 +1672,14 @@ export const ReportsScreen: React.FC<ReportsScreenProps> = ({
                 <Text style={{ color: colors.textDim, fontSize: 12.5 }}>Expenses:</Text>
                 <Text style={{ color: colors.error, fontSize: 13, fontWeight: '600' }}>{inrFromMinor(metrics.totalExpensesMinor)}</Text>
               </View>
+              {metrics.excludedExpensesMinor > 0 && (
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                  <Text style={{ color: colors.textDim, fontSize: 12.5 }}>Not counted in profit:</Text>
+                  <Text style={{ color: colors.textDim, fontSize: 13, fontWeight: '600' }}>
+                    {inrFromMinor(metrics.excludedExpensesMinor)}
+                  </Text>
+                </View>
+              )}
               <View style={{ height: 1, backgroundColor: colors.divider }} />
               <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
                 <Text style={{ color: colors.text, fontSize: 13, fontWeight: '700' }}>Net Profit ({metrics.marginPct}%):</Text>
@@ -1660,6 +1731,19 @@ export const ReportsScreen: React.FC<ReportsScreenProps> = ({
 };
 
 const styles = StyleSheet.create({
+  viewSwitch: {
+    flexDirection: 'row',
+    borderRadius: 14,
+    padding: 3,
+    marginBottom: 12,
+  },
+  viewSwitchBtn: {
+    flex: 1,
+    height: 38,
+    borderRadius: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   safeArea: {
     flex: 1,
   },

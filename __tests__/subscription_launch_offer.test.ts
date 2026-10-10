@@ -22,11 +22,11 @@ describe('Subscription Plan – First 30 Days Launch Offer Logic', () => {
       const plans = getSubscriptionPlans(isWithinFirst30DaysOfRegistration(regDate, day0));
 
       const threeMonths = plans.find((p) => p.id === '3_months')!;
-      expect(threeMonths.priceInRupees).toBe(1499);
+      expect(threeMonths.priceInRupees).toBe(2999);
       expect(threeMonths.discountPercent).toBe(0);
 
       const sixMonths = plans.find((p) => p.id === '6_months')!;
-      expect(sixMonths.priceInRupees).toBe(2399);
+      expect(sixMonths.priceInRupees).toBe(4799);
       expect(sixMonths.badge).toBe('20% OFF');
       expect(sixMonths.discountPercent).toBe(20);
 
@@ -70,20 +70,20 @@ describe('Subscription Plan – First 30 Days Launch Offer Logic', () => {
 
       // 3 Months Standard
       const threeMonths = plans.find((p) => p.id === '3_months')!;
-      expect(threeMonths.priceInRupees).toBe(1499);
+      expect(threeMonths.priceInRupees).toBe(2999);
       expect(threeMonths.discountPercent).toBe(0);
 
-      // 6 Months Standard (Previous pricing ₹2,799, 7% OFF)
+      // 6 Months regular price: 6 x ₹999, no offer
       const sixMonths = plans.find((p) => p.id === '6_months')!;
-      expect(sixMonths.priceInRupees).toBe(2799);
-      expect(sixMonths.badge).toBe('MOST POPULAR (7% OFF)');
-      expect(sixMonths.discountPercent).toBe(7);
+      expect(sixMonths.priceInRupees).toBe(5999);
+      expect(sixMonths.badge).toBeUndefined();
+      expect(sixMonths.discountPercent).toBe(0);
 
-      // 1 Year Standard (Previous pricing ₹4,999, 17% OFF)
+      // 12 Months regular price: ₹11,999, no offer
       const oneYear = plans.find((p) => p.id === '12_months')!;
-      expect(oneYear.priceInRupees).toBe(4999);
-      expect(oneYear.badge).toBe('BEST VALUE (17% OFF)');
-      expect(oneYear.discountPercent).toBe(17);
+      expect(oneYear.priceInRupees).toBe(11999);
+      expect(oneYear.badge).toBeUndefined();
+      expect(oneYear.discountPercent).toBe(0);
     });
 
     it('does not reset or restart the 30-day period on subsequent days', () => {
@@ -107,15 +107,15 @@ describe('Subscription Plan – First 30 Days Launch Offer Logic', () => {
       const userA_reg = '2026-09-10T00:00:00Z';
       expect(isWithinFirst30DaysOfRegistration(userA_reg, evaluationDate)).toBe(false);
       const userAPlans = getSubscriptionPlans(isWithinFirst30DaysOfRegistration(userA_reg, evaluationDate));
-      expect(userAPlans.find((p) => p.id === '6_months')!.priceInRupees).toBe(2799);
-      expect(userAPlans.find((p) => p.id === '12_months')!.priceInRupees).toBe(4999);
+      expect(userAPlans.find((p) => p.id === '6_months')!.priceInRupees).toBe(5999);
+      expect(userAPlans.find((p) => p.id === '12_months')!.priceInRupees).toBe(11999);
 
       // User B registered on Oct 4, 2026 (21 days ago) -> Active Launch Offer
       const userB_reg = '2026-10-04T00:00:00Z';
       expect(isWithinFirst30DaysOfRegistration(userB_reg, evaluationDate)).toBe(true);
       expect(getRemainingLaunchOfferDays(userB_reg, evaluationDate)).toBe(9);
       const userBPlans = getSubscriptionPlans(isWithinFirst30DaysOfRegistration(userB_reg, evaluationDate));
-      expect(userBPlans.find((p) => p.id === '6_months')!.priceInRupees).toBe(2399);
+      expect(userBPlans.find((p) => p.id === '6_months')!.priceInRupees).toBe(4799);
       expect(userBPlans.find((p) => p.id === '12_months')!.priceInRupees).toBe(5999);
 
       // User C registered today on Oct 25, 2026 (0 days ago) -> Active Launch Offer with full 30 days
@@ -123,7 +123,7 @@ describe('Subscription Plan – First 30 Days Launch Offer Logic', () => {
       expect(isWithinFirst30DaysOfRegistration(userC_reg, evaluationDate)).toBe(true);
       expect(getRemainingLaunchOfferDays(userC_reg, evaluationDate)).toBe(30);
       const userCPlans = getSubscriptionPlans(isWithinFirst30DaysOfRegistration(userC_reg, evaluationDate));
-      expect(userCPlans.find((p) => p.id === '6_months')!.priceInRupees).toBe(2399);
+      expect(userCPlans.find((p) => p.id === '6_months')!.priceInRupees).toBe(4799);
       expect(userCPlans.find((p) => p.id === '12_months')!.priceInRupees).toBe(5999);
     });
   });
@@ -139,9 +139,9 @@ describe('Subscription Plan – First 30 Days Launch Offer Logic', () => {
       const plans = getSubscriptionPlans(false);
       expect(plans).toEqual(STANDARD_SUBSCRIPTION_PLANS);
       expect(plans.map((p) => ({ id: p.id, price: p.priceInRupees }))).toEqual([
-        { id: '3_months', price: 1499 },
-        { id: '6_months', price: 2799 },
-        { id: '12_months', price: 4999 },
+        { id: '3_months', price: 2999 },
+        { id: '6_months', price: 5999 },
+        { id: '12_months', price: 11999 },
       ]);
     });
   });
@@ -149,16 +149,16 @@ describe('Subscription Plan – First 30 Days Launch Offer Logic', () => {
   describe('5. getPlanById Compatibility', () => {
     it('resolves correct plan price based on isLaunchOffer parameter', () => {
       // When isLaunchOffer = true
-      expect(getPlanById('6_months', true)?.priceInRupees).toBe(2399);
+      expect(getPlanById('6_months', true)?.priceInRupees).toBe(4799);
       expect(getPlanById('12_months', true)?.priceInRupees).toBe(5999);
 
       // When isLaunchOffer = false
-      expect(getPlanById('6_months', false)?.priceInRupees).toBe(2799);
-      expect(getPlanById('12_months', false)?.priceInRupees).toBe(4999);
+      expect(getPlanById('6_months', false)?.priceInRupees).toBe(5999);
+      expect(getPlanById('12_months', false)?.priceInRupees).toBe(11999);
 
       // 3 Months is identical in both
-      expect(getPlanById('3_months', true)?.priceInRupees).toBe(1499);
-      expect(getPlanById('3_months', false)?.priceInRupees).toBe(1499);
+      expect(getPlanById('3_months', true)?.priceInRupees).toBe(2999);
+      expect(getPlanById('3_months', false)?.priceInRupees).toBe(2999);
     });
   });
 });

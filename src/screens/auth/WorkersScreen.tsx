@@ -13,6 +13,8 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '../../theme/ThemeContext';
+import { GlassBackdrop } from '../../components/common/GlassBackdrop';
+import { getGlass } from '../../theme/glass';
 import { Button } from '../../components/common/Button';
 import { BackIcon, CrossIcon, UsersIcon } from '../../components/common/SvgIcons';
 import { getInitials } from '../../utils/format';
@@ -150,6 +152,7 @@ export const WorkersScreen = ({
 
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.bg }]}>
+      <GlassBackdrop isDark={colors.isDark} />
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         style={{ flex: 1 }}
@@ -191,7 +194,7 @@ export const WorkersScreen = ({
 
           <View style={styles.list}>
             {staffDraft.length === 0 ? (
-              <View style={[styles.emptyPrompt, { backgroundColor: colors.surface, borderColor: colors.divider }]}>
+              <View style={[styles.emptyPrompt, { ...getGlass(colors.isDark).card, borderWidth: 1 }]}>
                 <Text style={[styles.emptyPromptTitle, { color: colors.text }]}>No team members added yet</Text>
                 <Text style={[styles.emptyPromptSub, { color: colors.textDim }]}>
                   Type a stylist name and 10-digit mobile number below, then tap "+ Add to Team".
@@ -201,7 +204,7 @@ export const WorkersScreen = ({
               staffDraft.map((s, idx) => (
                 <View
                   key={idx}
-                  style={[styles.memberCard, { backgroundColor: colors.surface }]}
+                  style={[styles.memberCard, { ...getGlass(colors.isDark).card, borderWidth: 1 }]}
                 >
                   <View
                     style={[
@@ -235,13 +238,13 @@ export const WorkersScreen = ({
 
           {/* Add Member Card */}
           {staffDraft.length >= 3 ? (
-            <View style={[styles.limitNoticeCard, { backgroundColor: colors.surface, borderColor: colors.divider }]}>
+            <View style={[styles.limitNoticeCard, { ...getGlass(colors.isDark).card, borderWidth: 1 }]}>
               <Text style={[styles.limitNoticeText, { color: colors.accent }]}>
                 ★ Stylist limit reached (3 stylists maximum per salon)
               </Text>
             </View>
           ) : (
-            <View style={[styles.addSectionCard, { backgroundColor: colors.surface, borderColor: colors.divider }]}>
+            <View style={[styles.addSectionCard, { ...getGlass(colors.isDark).card, borderWidth: 1 }]}>
               <Text style={[styles.addSectionLabel, { color: colors.text }]}>Add Stylist / Team Member</Text>
 
               <TouchableOpacity

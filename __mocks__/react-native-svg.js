@@ -1,11 +1,19 @@
 const React = require('react');
 
-const SvgMock = (props) => React.createElement('Svg', props, props.children);
+const make = (name) => (props) => React.createElement(name, props, props.children);
+
+const SvgMock = make('Svg');
 SvgMock.Svg = SvgMock;
-SvgMock.Path = (props) => React.createElement('Path', props, props.children);
-SvgMock.Circle = (props) => React.createElement('Circle', props, props.children);
-SvgMock.Rect = (props) => React.createElement('Rect', props, props.children);
-SvgMock.Line = (props) => React.createElement('Line', props, props.children);
+SvgMock.Path = make('Path');
+SvgMock.Circle = make('Circle');
+SvgMock.Rect = make('Rect');
+SvgMock.Line = make('Line');
+SvgMock.Ellipse = make('Ellipse');
+SvgMock.G = make('G');
+SvgMock.Defs = make('Defs');
+SvgMock.Stop = make('Stop');
+SvgMock.LinearGradient = make('LinearGradient');
+SvgMock.RadialGradient = make('RadialGradient');
 SvgMock.default = SvgMock;
 
 module.exports = SvgMock;
