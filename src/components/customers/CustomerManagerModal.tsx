@@ -80,6 +80,27 @@ export const CustomerManagerModal = ({
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const manualScrollRef = React.useRef<ScrollView>(null);
 
+  // Some Android windows shrink for the keyboard by themselves, others do not. Measure which one this is
+  // so the sheet is lifted above the keyboard exactly once (never twice, never not at all).
+  const overlayHeight = React.useRef(0);
+  const heightWithoutKeyboard = React.useRef(0);
+  const [windowShrunk, setWindowShrunk] = useState(false);
+  const updateWindowShrunk = () => {
+    const base = heightWithoutKeyboard.current;
+    const shrunk =
+      keyboardHeightRef.current > 0 && base > 0 && overlayHeight.current <= base - keyboardHeightRef.current * 0.6;
+    setWindowShrunk((prev) => (prev === shrunk ? prev : shrunk));
+  };
+
+  const keyboardHeightRef = React.useRef(0);
+  keyboardHeightRef.current = keyboardHeight;
+  useEffect(() => {
+    updateWindowShrunk();
+  }, [keyboardHeight]);
+  useEffect(() => {
+    if (!visible) heightWithoutKeyboard.current = 0;
+  }, [visible]);
+
   useEffect(() => {
     const showSub = Keyboard.addListener(
       Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow',
@@ -531,11 +552,19 @@ export const CustomerManagerModal = ({
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         style={{ flex: 1 }}
       >
-        {/* The Android modal window is not resized by the keyboard: lift the sheet above it so the notes field stays visible */}
+        {/* Lift the sheet above the keyboard unless Android already shrank the window for it */}
         <View
+          onLayout={(e) => {
+            overlayHeight.current = e.nativeEvent.layout.height;
+            // The sheet opens with the keyboard closed: the first height is the full-window height
+            if (heightWithoutKeyboard.current === 0 && keyboardHeight === 0) {
+              heightWithoutKeyboard.current = overlayHeight.current;
+            }
+            updateWindowShrunk();
+          }}
           style={[
             styles.modalOverlay,
-            Platform.OS === 'android' && keyboardHeight > 0 ? { paddingBottom: keyboardHeight } : null,
+            Platform.OS === 'android' && keyboardHeight > 0 && !windowShrunk ? { paddingBottom: keyboardHeight } : null,
           ]}
         >
         <View
