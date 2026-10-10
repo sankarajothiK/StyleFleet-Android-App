@@ -22,8 +22,10 @@ export const Modal = ({ children, visible, ...rest }: ModalProps) => {
 
   const adjust = useCallback(() => {
     if (Platform.OS !== 'android') return;
-    const top = keyboardTop.current;
+    // The keyboard can already be open when the sheet appears (e.g. the page's search box): no event fires then
+    const top = keyboardTop.current ?? Keyboard.metrics()?.screenY ?? null;
     if (top == null) return;
+    keyboardTop.current = top;
     const input = TextInput.State.currentlyFocusedInput?.();
     if (!input) return;
     input.measureInWindow((_x, y, _w, h) => {
@@ -44,6 +46,8 @@ export const Modal = ({ children, visible, ...rest }: ModalProps) => {
 
   useEffect(() => {
     if (Platform.OS !== 'android' || !visible) return undefined;
+    // A keyboard left open by the page behind belongs to a field that is now covered by this sheet
+    if (Keyboard.isVisible()) Keyboard.dismiss();
     const showSub = Keyboard.addListener('keyboardDidShow', (e) => {
       keyboardTop.current = e.endCoordinates.screenY;
       scheduleAdjust(60);
@@ -67,7 +71,7 @@ export const Modal = ({ children, visible, ...rest }: ModalProps) => {
       <View
         style={{ flex: 1, transform: [{ translateY: -shift }] }}
         onTouchEnd={() => {
-          if (keyboardTop.current != null) scheduleAdjust(220);
+          if (Keyboard.isVisible()) scheduleAdjust(220);
         }}
       >
         {children}
