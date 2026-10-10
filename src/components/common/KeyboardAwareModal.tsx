@@ -56,14 +56,19 @@ export const Modal = ({ children, visible, ...rest }: ModalProps) => {
       keyboardTop.current = null;
       apply(0);
     });
+    // Focus can also move by the keyboard's Next key, which fires no event: re-check while it is open
+    const poll = setInterval(() => {
+      if (Keyboard.isVisible()) adjust();
+    }, 300);
     return () => {
+      clearInterval(poll);
       showSub.remove();
       hideSub.remove();
       if (timer.current) clearTimeout(timer.current);
       keyboardTop.current = null;
       apply(0);
     };
-  }, [visible, scheduleAdjust]);
+  }, [visible, scheduleAdjust, adjust]);
 
   // Moving from one field to another does not fire a keyboard event: re-check after every touch
   return (
