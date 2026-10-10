@@ -9,6 +9,7 @@ import {
   Image,
   Platform,
   Animated,
+  AccessibilityInfo,
   useWindowDimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -21,19 +22,23 @@ import {
   MoonIcon,
   CalendarIcon,
   ClockIcon,
-  ArrowRightIcon,
   SparklesIcon,
   CheckIcon,
   PlusIcon,
   UsersIcon,
+  ChevronDownIcon,
+  ArrowRightIcon,
 } from '../../components/common/SvgIcons';
 import { Appointment, Bill, Customer, Period, Service, StaffMember } from '../../types/domain';
 import { financialService } from '../../services/financialService';
-import { inr, inrFromMinor, getInitials, formatTimeDisplay } from '../../utils/format';
+import { inr, inrFromMinor, getInitials } from '../../utils/format';
 import { fontFamilies } from '../../theme/typography';
 import { useQuickBook } from '../../hooks/useQuickBook';
 import { QuickBookSuggestion } from '../../services/quickBookService';
 import { usePullRefresh } from '../../hooks/usePullRefresh';
+import { GlassBackdrop } from '../../components/common/GlassBackdrop';
+import { getGlass } from '../../theme/glass';
+import { fmt } from '../../i18n/format';
 
 interface HomeScreenProps {
   onRefresh?: () => Promise<void>;
@@ -58,6 +63,10 @@ interface HomeScreenProps {
   /** Open the full booking screen for a customer, prefilled from the suggestion when there is one. */
   onBookForCustomer: (customer: Customer, suggestion: QuickBookSuggestion | null) => void;
   onNavigateAppointments?: () => void;
+  /** Revenue tile: open the Reports summary for the period chosen on Home. */
+  onOpenReportsSummary?: (period: Period) => void;
+  /** Bills tile: open the Sales screen (the bill list). */
+  onNavigateSales?: () => void;
   onNavigateReminders: () => void;
   onNavigateProfile: () => void;
   onOpenInvoice: (bill: Bill) => void;
@@ -114,6 +123,8 @@ export const HomeScreen = ({
   onQuickConfirm,
   onBookForCustomer,
   onNavigateAppointments,
+  onOpenReportsSummary,
+  onNavigateSales,
   onNavigateReminders,
   onNavigateProfile,
   onOpenInvoice,
@@ -124,12 +135,36 @@ export const HomeScreen = ({
   const { width: screenWidth } = useWindowDimensions();
   const narrow = screenWidth < 350;
   const themeKnob = useRef(new Animated.Value(colors.isDark ? 1 : 0)).current;
+  // Soft gold ring that pulses around the two main taps; skipped when the phone asks for reduced motion
+  const pulse = useRef(new Animated.Value(0.15)).current;
+  useEffect(() => {
+    let loop: Animated.CompositeAnimation | null = null;
+    let cancelled = false;
+    AccessibilityInfo.isReduceMotionEnabled()
+      .then((reduce) => {
+        if (cancelled || reduce) return;
+        loop = Animated.loop(
+          Animated.sequence([
+            Animated.timing(pulse, { toValue: 1, duration: 800, useNativeDriver: true }),
+            Animated.timing(pulse, { toValue: 0.15, duration: 800, useNativeDriver: true }),
+          ])
+        );
+        loop.start();
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+      loop?.stop();
+    };
+  }, [pulse]);
   useEffect(() => {
     Animated.timing(themeKnob, { toValue: colors.isDark ? 1 : 0, duration: 180, useNativeDriver: true }).start();
   }, [colors.isDark, themeKnob]);
   const { t, language, setLanguage } = useLanguage();
   const [period, setPeriod] = useState<Period>('Day');
   const [logoLoadError, setLogoLoadError] = useState(false);
+  // Recent bills stay folded until the owner opens them
+  const [billsOpen, setBillsOpen] = useState(false);
 
   const quick = useQuickBook({
     shopId,
@@ -238,33 +273,13 @@ export const HomeScreen = ({
     }, 0);
   }, [activeBills]);
 
-  const statusLabel = (s: Appointment['status']): string => {
-    switch (s) {
-      case 'Confirmed':
-        return t('statusConfirmed', s);
-      case 'Not confirmed':
-        return t('statusNotConfirmed', s);
-      case 'In chair':
-        return t('statusInChair', s);
-      case 'Done':
-        return t('statusDone', s);
-      default:
-        return t('statusCancelled', s);
-    }
-  };
-  const statusColor = (s: Appointment['status']): string =>
-    s === 'Done' || s === 'Confirmed'
-      ? colors.success
-      : s === 'Cancelled'
-      ? colors.textDim
-      : s === 'In chair'
-      ? colors.accent
-      : colors.textMuted;
-
   const border = { borderColor: colors.border };
+  const glass = getGlass(colors.isDark);
+  const greetName = ownerName?.trim() || 'Owner';
 
   return (
     <View style={[styles.container, { backgroundColor: colors.bg }]}>
+      <GlassBackdrop isDark={colors.isDark} />
       {/* HEADER: theme, language, reminders, shop name */}
       <SafeAreaView edges={['top']}>
         <View style={styles.simpleHeader}>
@@ -275,7 +290,7 @@ export const HomeScreen = ({
               accessibilityRole="switch"
               accessibilityState={{ checked: colors.isDark }}
               accessibilityLabel={t('theme', 'Theme')}
-              style={[styles.themeSwitch, border]}
+              style={[styles.themeSwitch, glass.inset]}
             >
               <Animated.View
                 style={[
@@ -295,7 +310,7 @@ export const HomeScreen = ({
             </TouchableOpacity>
 
             <View style={[styles.headerRightGroup, narrow && { gap: 6 }]}>
-              <View style={[styles.langPill, border]}>
+              <View style={[styles.langPill, glass.inset]}>
                 {LANG_OPTIONS.map((opt) => {
                   const active = language === opt.code;
                   return (
@@ -325,7 +340,7 @@ export const HomeScreen = ({
                 activeOpacity={0.75}
                 onPress={onNavigateReminders}
                 accessibilityLabel={t('reminders', 'Reminders')}
-                style={[styles.circleActionBtn, border]}
+                style={[styles.circleActionBtn, glass.raised]}
               >
                 <BellIcon size={18} color={colors.text} />
                 {remindersCount > 0 && <View style={styles.notifBadge} />}
@@ -337,7 +352,7 @@ export const HomeScreen = ({
             <TouchableOpacity
               activeOpacity={0.85}
               onPress={onNavigateProfile}
-              style={[styles.logoCircle, border]}
+              style={[styles.logoCircle, glass.raised]}
             >
               {canShowLogo ? (
                 <Image
@@ -366,7 +381,7 @@ export const HomeScreen = ({
                 {shopName || 'StyleFleet'}
               </Text>
               <Text numberOfLines={1} style={[styles.pageTitle, { color: colors.textMuted }]}>
-                {t('dashTitle', 'Dashboard')}
+                {fmt(t('goodDay', 'Good day, {name}'), { name: greetName })}
               </Text>
             </View>
           </View>
@@ -380,7 +395,7 @@ export const HomeScreen = ({
         showsVerticalScrollIndicator={false}
       >
         {/* SUMMARY: period switch + four figures */}
-        <View style={styles.periodRow}>
+        <View style={[styles.periodRow, glass.inset]}>
           {(['Day', 'Week', 'Month'] as const).map((p) => {
             const isSelected = period === p;
             return (
@@ -390,11 +405,7 @@ export const HomeScreen = ({
                 onPress={() => setPeriod(p)}
                 accessibilityRole="button"
                 accessibilityState={{ selected: isSelected }}
-                style={[
-                  styles.periodBtn,
-                  { borderColor: isSelected ? colors.accent : colors.border },
-                  isSelected && { backgroundColor: colors.accent },
-                ]}
+                style={[styles.periodBtn, isSelected && { backgroundColor: colors.accent }]}
               >
                 <Text style={[styles.periodBtnText, { color: isSelected ? ON_ACCENT : colors.textMuted }]}>
                   {p === 'Day' ? t('today', 'Today') : t(p.toLowerCase(), p)}
@@ -404,8 +415,15 @@ export const HomeScreen = ({
           })}
         </View>
 
-        <View style={[styles.metricsGrid, { borderColor: colors.divider }]}>
-          <View style={[styles.metric, styles.metricRight, { borderColor: colors.divider }]}>
+        <View style={styles.metricsGrid}>
+          <TouchableOpacity
+            activeOpacity={onOpenReportsSummary ? 0.8 : 1}
+            disabled={!onOpenReportsSummary}
+            onPress={() => onOpenReportsSummary?.(period)}
+            accessibilityRole="button"
+            accessibilityLabel={`${t('dashRevenue', 'Revenue')} · ${periodLabel}`}
+            style={[styles.metric, glass.raised, { backgroundColor: colors.surface }, onOpenReportsSummary && styles.metricTappable]}
+          >
             <Text numberOfLines={1} style={[styles.metricLabel, { color: colors.textMuted }]}>
               {t('dashRevenue', 'Revenue')} · {periodLabel}
             </Text>
@@ -415,20 +433,61 @@ export const HomeScreen = ({
             <Text numberOfLines={1} style={[styles.metricSub, { color: isUp ? colors.accent : colors.neutral400 }]}>
               {deltaLabel}
             </Text>
-          </View>
-          <View style={styles.metric}>
+            {onOpenReportsSummary && (
+              <View style={styles.tapCue}>
+                <Text numberOfLines={1} style={[styles.tapCueText, { color: colors.accent }]}>
+                  {t('dashViewAll', 'View all')}
+                </Text>
+                <ArrowRightIcon size={13} color={colors.accent} strokeWidth={2.6} />
+              </View>
+            )}
+          </TouchableOpacity>
+          <TouchableOpacity
+            activeOpacity={onNavigateAppointments ? 0.8 : 1}
+            disabled={!onNavigateAppointments}
+            onPress={onNavigateAppointments}
+            accessibilityRole="button"
+            accessibilityLabel={t('myAppointments', 'My Appointments')}
+            style={[styles.metric, glass.raised, { backgroundColor: colors.surface }, onNavigateAppointments && styles.metricTappable]}
+          >
+            {onNavigateAppointments && (
+              <Animated.View pointerEvents="none" style={[styles.pulseRing, { borderColor: colors.accent, opacity: pulse, borderRadius: 16 }]} />
+            )}
             <Text numberOfLines={1} style={[styles.metricLabel, { color: colors.textMuted }]}>
               {t('appointments', 'Appointments')} · {t('today', 'Today')}
             </Text>
             <Text style={[styles.metricValue, { color: colors.text }]}>{todayActiveCount}</Text>
-          </View>
-          <View style={[styles.metric, styles.metricRight, styles.metricBottom, { borderColor: colors.divider }]}>
+            {onNavigateAppointments && (
+              <View style={styles.tapCue}>
+                <Text numberOfLines={1} style={[styles.tapCueText, { color: colors.accent }]}>
+                  {t('dashViewAll', 'View all')}
+                </Text>
+                <ArrowRightIcon size={13} color={colors.accent} strokeWidth={2.6} />
+              </View>
+            )}
+          </TouchableOpacity>
+          <TouchableOpacity
+            activeOpacity={onNavigateSales ? 0.8 : 1}
+            disabled={!onNavigateSales}
+            onPress={onNavigateSales}
+            accessibilityRole="button"
+            accessibilityLabel={`${t('dashBills', 'Bills')} · ${periodLabel}`}
+            style={[styles.metric, glass.raised, { backgroundColor: colors.surface }, onNavigateSales && styles.metricTappable]}
+          >
             <Text numberOfLines={1} style={[styles.metricLabel, { color: colors.textMuted }]}>
               {t('dashBills', 'Bills')} · {periodLabel}
             </Text>
             <Text style={[styles.metricValue, { color: colors.text }]}>{metrics.bills_count}</Text>
-          </View>
-          <View style={[styles.metric, styles.metricBottom, { borderColor: colors.divider }]}>
+            {onNavigateSales && (
+              <View style={styles.tapCue}>
+                <Text numberOfLines={1} style={[styles.tapCueText, { color: colors.accent }]}>
+                  {t('dashViewAll', 'View all')}
+                </Text>
+                <ArrowRightIcon size={13} color={colors.accent} strokeWidth={2.6} />
+              </View>
+            )}
+          </TouchableOpacity>
+          <View style={[styles.metric, glass.raised, { backgroundColor: colors.surface }]}>
             <Text numberOfLines={1} style={[styles.metricLabel, { color: colors.textMuted }]}>
               {t('dashPending', 'Pending dues')}
             </Text>
@@ -446,57 +505,10 @@ export const HomeScreen = ({
           accessibilityLabel={t('newBooking', 'New booking')}
           style={[styles.newBookingBtn, { backgroundColor: colors.accent }]}
         >
+          <Animated.View pointerEvents="none" style={[styles.pulseRing, { borderColor: colors.accent100, opacity: pulse, borderRadius: 14 }]} />
           <CalendarIcon size={18} color={ON_ACCENT} strokeWidth={2.2} />
           <Text style={styles.newBookingText}>{t('newBooking', 'New booking')}</Text>
         </TouchableOpacity>
-
-        {/* TODAY'S APPOINTMENTS */}
-        <View style={styles.sectionHead}>
-          <Text style={[styles.sectionTitle, { color: colors.text }]}>
-            {t('dashTodayAppts', "Today's appointments")}
-          </Text>
-          {onNavigateAppointments && (
-            <TouchableOpacity
-              activeOpacity={0.8}
-              onPress={onNavigateAppointments}
-              accessibilityLabel={t('myAppointments', 'My Appointments')}
-              style={styles.viewAll}
-            >
-              <Text style={[styles.viewAllText, { color: colors.accent }]}>{t('dashViewAll', 'View all')}</Text>
-              <ArrowRightIcon size={12} color={colors.accent} strokeWidth={2.5} />
-            </TouchableOpacity>
-          )}
-        </View>
-        {todayAppointments.length === 0 ? (
-          <Text style={[styles.emptyText, { color: colors.textDim }]}>
-            {t('dashNoApptsToday', 'No appointments today')}
-          </Text>
-        ) : (
-          <View style={[styles.list, { borderColor: colors.divider }]}>
-            {todayAppointments.map((a) => (
-              <TouchableOpacity
-                key={a.id}
-                activeOpacity={onNavigateAppointments ? 0.7 : 1}
-                onPress={onNavigateAppointments}
-                disabled={!onNavigateAppointments}
-                style={[styles.row, { borderBottomColor: colors.divider }]}
-              >
-                <Text style={[styles.rowTime, { color: colors.textMuted }]}>{formatTimeDisplay(a.starts_at)}</Text>
-                <View style={styles.rowMain}>
-                  <Text numberOfLines={1} style={[styles.rowTitle, { color: colors.text }]}>
-                    {a.customer_name}
-                  </Text>
-                  <Text numberOfLines={1} style={[styles.rowSub, { color: colors.textDim }]}>
-                    {a.service_name} · {a.staff_name}
-                  </Text>
-                </View>
-                <Text numberOfLines={1} style={[styles.rowStatus, { color: statusColor(a.status) }]}>
-                  {statusLabel(a.status)}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-        )}
 
         {/* BOOK AGAIN */}
         <View style={styles.sectionHead}>
@@ -552,7 +564,7 @@ export const HomeScreen = ({
         )}
 
         {quick.suggestion && (
-          <View style={[styles.suggestCard, { borderColor: colors.border, backgroundColor: colors.surface }]}>
+          <View style={[styles.suggestCard, glass.raised]}>
             <Text style={[styles.suggestHint, { color: colors.textMuted }]}>
               {t('sameAsLast', 'Same as last time?')}
             </Text>
@@ -615,17 +627,32 @@ export const HomeScreen = ({
         )}
 
         {/* RECENT BILLS */}
-        <View style={styles.sectionHead}>
+        <TouchableOpacity
+          activeOpacity={0.85}
+          onPress={() => setBillsOpen((open) => !open)}
+          accessibilityRole="button"
+          accessibilityState={{ expanded: billsOpen }}
+          accessibilityLabel={t('recentBills', 'Recent Bills')}
+          style={[styles.collapseHead, glass.raised]}
+        >
           <Text style={[styles.sectionTitle, { color: colors.text }]}>
             {t('recentBills', 'Recent Bills')}
           </Text>
-        </View>
-        {recentBills.length === 0 ? (
+          <View style={styles.collapseRight}>
+            {recentBills.length > 0 && (
+              <Text style={[styles.collapseCount, { color: colors.textMuted }]}>{recentBills.length}</Text>
+            )}
+            <View style={{ transform: [{ rotate: billsOpen ? '180deg' : '0deg' }] }}>
+              <ChevronDownIcon size={18} color={colors.accent} strokeWidth={2.4} />
+            </View>
+          </View>
+        </TouchableOpacity>
+        {!billsOpen ? null : recentBills.length === 0 ? (
           <Text style={[styles.emptyText, { color: colors.textDim }]}>
             {t('noBillsYet', 'No bills recorded yet')}
           </Text>
         ) : (
-          <View style={[styles.list, { borderColor: colors.divider }]}>
+          <View style={[styles.list, glass.raised]}>
             {recentBills.map((b) => {
               const isPartiallyPaid = b.status === 'partially_paid';
               const isPending = b.status === 'pending';
@@ -687,7 +714,7 @@ export const HomeScreen = ({
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  simpleHeader: { paddingHorizontal: 16, paddingTop: 6, paddingBottom: 10, gap: 10 },
+  simpleHeader: { paddingHorizontal: 16, paddingTop: 14, paddingBottom: 10, gap: 16 },
   headerTopRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
   themeSwitch: {
     width: 62,
@@ -706,7 +733,7 @@ const styles = StyleSheet.create({
   circleActionBtn: {
     width: 36,
     height: 36,
-    borderRadius: 10,
+    borderRadius: 12,
     borderWidth: 1,
     justifyContent: 'center',
     alignItems: 'center',
@@ -722,9 +749,9 @@ const styles = StyleSheet.create({
   },
   storeInfoRow: { flexDirection: 'row', alignItems: 'center' },
   logoCircle: {
-    width: 40,
-    height: 40,
-    borderRadius: 10,
+    width: 42,
+    height: 42,
+    borderRadius: 14,
     borderWidth: 1,
     overflow: 'hidden',
     justifyContent: 'center',
@@ -735,25 +762,34 @@ const styles = StyleSheet.create({
   logoInitials: { fontSize: 15, fontWeight: '700', letterSpacing: 0.5 },
   storeTextCol: { marginLeft: 10, flex: 1, minWidth: 0 },
   storeTitle: { fontSize: 17, fontWeight: '700', fontFamily: fontFamilies.bold },
-  pageTitle: { fontSize: 12, fontWeight: '500', fontFamily: fontFamilies.medium, marginTop: 1 },
+  pageTitle: { fontSize: 13, fontWeight: '600', fontFamily: fontFamilies.semiBold, marginTop: 1 },
   scrollArea: { flex: 1 },
-  scrollContent: { paddingHorizontal: 16, paddingTop: 4, paddingBottom: 36 },
+  scrollContent: { paddingHorizontal: 16, paddingTop: 16, paddingBottom: 36 },
 
-  periodRow: { flexDirection: 'row', gap: 6, marginBottom: 10 },
+  periodRow: { flexDirection: 'row', gap: 4, marginBottom: 12, padding: 3, borderRadius: 12, borderWidth: 1, alignSelf: 'flex-start' },
   periodBtn: {
-    paddingHorizontal: 12,
+    paddingHorizontal: 14,
     minHeight: 30,
-    borderRadius: 8,
-    borderWidth: 1,
+    borderRadius: 9,
     alignItems: 'center',
     justifyContent: 'center',
   },
   periodBtnText: { fontSize: 12.5, fontWeight: '600', fontFamily: fontFamilies.semiBold },
 
-  metricsGrid: { flexDirection: 'row', flexWrap: 'wrap', borderTopWidth: 1, borderBottomWidth: 1 },
-  metric: { width: '50%', paddingVertical: 12, paddingHorizontal: 12 },
-  metricRight: { borderRightWidth: 1 },
-  metricBottom: { borderTopWidth: 1 },
+  metricsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+  metric: { flexBasis: '45%', flexGrow: 1, borderRadius: 16, borderWidth: 1, paddingVertical: 12, paddingHorizontal: 13, elevation: 5 },
+  // Looks pressable: gold edge and a gold glow under it
+  metricTappable: {
+    borderColor: 'rgba(212, 175, 55, 0.7)',
+    shadowColor: '#D4AF37',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.45,
+    shadowRadius: 14,
+    elevation: 12,
+  },
+  pulseRing: { position: 'absolute', top: -2, left: -2, right: -2, bottom: -2, borderWidth: 2 },
+  tapCue: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 },
+  tapCueText: { fontSize: 11.5, fontWeight: '700', fontFamily: fontFamilies.bold },
   metricLabel: { fontSize: 11.5, fontWeight: '500', fontFamily: fontFamilies.medium },
   metricValue: { fontSize: 22, fontWeight: '700', fontFamily: fontFamilies.bold, marginTop: 3 },
   metricSub: { fontSize: 11, fontWeight: '600', fontFamily: fontFamilies.semiBold, marginTop: 2 },
@@ -763,25 +799,29 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
-    minHeight: 44,
-    borderRadius: 10,
-    marginTop: 14,
+    minHeight: 46,
+    borderRadius: 14,
+    marginTop: 16,
+    shadowColor: '#D4AF37',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.35,
+    shadowRadius: 12,
+    elevation: 8,
   },
   newBookingText: { color: ON_ACCENT, fontSize: 15, fontWeight: '700', fontFamily: fontFamilies.bold },
 
   sectionHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 20, marginBottom: 8 },
   sectionTitle: { fontSize: 15, fontWeight: '700', fontFamily: fontFamilies.bold },
-  viewAll: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  viewAllText: { fontSize: 13, fontWeight: '600', fontFamily: fontFamilies.semiBold },
   emptyText: { fontSize: 13, paddingVertical: 4 },
 
-  list: { borderTopWidth: 1 },
-  row: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 1, gap: 10 },
-  rowTime: { width: 64, fontSize: 12, fontWeight: '600', fontFamily: fontFamilies.semiBold },
+  list: { borderWidth: 1, borderRadius: 16, paddingHorizontal: 12 },
+  collapseHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 20, marginBottom: 10, borderWidth: 1, borderRadius: 14, paddingHorizontal: 14, minHeight: 44 },
+  collapseRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  collapseCount: { fontSize: 12.5, fontWeight: '600', fontFamily: fontFamilies.semiBold },
+  row: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth, gap: 10 },
   rowMain: { flex: 1, minWidth: 0 },
   rowTitle: { fontSize: 13.5, fontWeight: '600', fontFamily: fontFamilies.semiBold },
   rowSub: { fontSize: 11.5, marginTop: 1 },
-  rowStatus: { fontSize: 11.5, fontWeight: '600', fontFamily: fontFamilies.semiBold, maxWidth: 96, textAlign: 'right' },
   billTime: { fontSize: 10.5, width: 64 },
   billRight: { alignItems: 'flex-end', maxWidth: 150 },
   billAmt: { fontSize: 13.5, fontWeight: '700', fontFamily: fontFamilies.bold },
@@ -802,7 +842,7 @@ const styles = StyleSheet.create({
   faceInitials: { color: ON_ACCENT, fontSize: 13.5, fontWeight: '700', fontFamily: fontFamilies.bold },
   faceName: { fontSize: 12, lineHeight: 15, textAlign: 'center', fontWeight: '500', fontFamily: fontFamilies.medium },
 
-  suggestCard: { borderRadius: 10, borderWidth: 1, padding: 14, marginTop: 8 },
+  suggestCard: { borderRadius: 16, borderWidth: 1, padding: 14, marginTop: 8 },
   suggestHint: { fontSize: 13, marginBottom: 10 },
   suggestRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 8 },
   suggestMain: { flex: 1, fontSize: 15, fontWeight: '600', fontFamily: fontFamilies.semiBold },

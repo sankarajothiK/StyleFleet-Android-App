@@ -208,8 +208,15 @@ export const ShopProfileScreen = ({
   };
 
   const handleSelectNumberingMode = async (mode: 'monthly' | 'yearly') => {
+    const previousMode = numberingMode;
     setNumberingMode(mode);
-    await shopRepository.setInvoiceNumberingMode(shopId, mode);
+    try {
+      await shopRepository.setInvoiceNumberingMode(shopId, mode);
+    } catch (e: any) {
+      setNumberingMode(previousMode);
+      Alert.alert('Error', e?.message || 'Could not change invoice numbering');
+      return;
+    }
     Alert.alert(
       'Invoice Numbering Updated',
       `Invoice numbering set to ${
@@ -349,9 +356,15 @@ export const ShopProfileScreen = ({
       if (!result.canceled && result.assets && result.assets.length > 0) {
         const newUri = result.assets[0].uri;
         setIsUpdatingLogo(true);
+        const previousLogo = currentLogo;
         setCurrentLogo(newUri);
         if (onUpdateLogo) {
-          await onUpdateLogo(newUri);
+          try {
+            await onUpdateLogo(newUri);
+          } catch (e) {
+            setCurrentLogo(previousLogo);
+            throw e;
+          }
         }
         setIsUpdatingLogo(false);
         Alert.alert('Logo Updated', 'Your salon logo has been saved.');
@@ -367,7 +380,12 @@ export const ShopProfileScreen = ({
     setIsGstEnabled(nextState);
     const rateToSave = nextState ? (parseFloat(gstRateInput) || 0) : 0;
     if (onUpdateGstRate) {
-      await onUpdateGstRate(rateToSave);
+      try {
+        await onUpdateGstRate(rateToSave);
+      } catch (e: any) {
+        setIsGstEnabled(!nextState);
+        Alert.alert('Error', e?.message || 'Could not change GST');
+      }
     }
   };
 
@@ -379,11 +397,16 @@ export const ShopProfileScreen = ({
     }
 
     setIsUpdatingGst(true);
-    if (onUpdateGstRate) {
-      await onUpdateGstRate(isGstEnabled ? rate : 0);
+    try {
+      if (onUpdateGstRate) {
+        await onUpdateGstRate(isGstEnabled ? rate : 0);
+      }
+      Alert.alert('GST Updated', `GST on services set to ${isGstEnabled ? rate : 0}%.`);
+    } catch (e: any) {
+      Alert.alert('Error', e?.message || 'Could not save GST');
+    } finally {
+      setIsUpdatingGst(false);
     }
-    setIsUpdatingGst(false);
-    Alert.alert('GST Updated', `GST on services set to ${isGstEnabled ? rate : 0}%.`);
   };
 
   return (
@@ -795,7 +818,7 @@ export const ShopProfileScreen = ({
                   {isSavingProfile ? (
                     <ActivityIndicator color="#000" size="small" />
                   ) : (
-                    <Text style={{ color: '#000', fontWeight: '700', fontSize: 14 }}>Save Changes to Database</Text>
+                    <Text style={{ color: '#000', fontWeight: '700', fontSize: 14 }}>{t('saveChanges', 'Save Changes')}</Text>
                   )}
                 </TouchableOpacity>
               </View>

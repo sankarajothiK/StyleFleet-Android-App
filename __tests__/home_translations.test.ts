@@ -37,3 +37,13 @@ describe('Home screen wording in English, Hindi and Tamil', () => {
     expect(/[஀-௿]/.test(ta.newBooking)).toBe(true); // Tamil
   });
 });
+
+describe('Home greeting', () => {
+  for (const lang of ['en', 'ta', 'ml', 'te', 'hi', 'kn'] as const) {
+    it(`greets the owner by name in ${lang}`, () => {
+      const dict = translations[lang] as Record<string, string>;
+      expect(typeof dict.goodDay).toBe('string');
+      expect(dict.goodDay).toContain('{name}');
+    });
+  }
+});

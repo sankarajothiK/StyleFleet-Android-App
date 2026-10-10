@@ -2,6 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ReminderItem } from '../types/domain';
 import { supabase } from '../lib/supabase';
 import { toLocalDateStr } from '../utils/dateUtils';
+import { assertSaved } from '../utils/persist';
 
 const STORAGE_KEY_REMINDERS = '@salon_os_reminders_cache';
 const STORAGE_KEY_RULES = '@salon_os_reminder_rules_cache';
@@ -185,14 +186,12 @@ export class ReminderRepository {
   async dismissReminder(shopId: string, reminderId: string): Promise<void> {
     if (reminderId.startsWith('rem_support_')) {
       const answerId = reminderId.replace('rem_support_', '');
-      try {
-        await supabase
-          .from('support_message_answers')
-          .update({ is_read: true })
-          .eq('id', answerId);
-      } catch {
-        // ignore
-      }
+      const result = await supabase
+        .from('support_message_answers')
+        .update({ is_read: true })
+        .eq('id', answerId)
+        .eq('shop_id', shopId);
+      assertSaved(result, 'the reply being marked as read');
     }
 
     const current = (await this.getCachedReminders(shopId)) || [];

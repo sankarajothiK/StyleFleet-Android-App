@@ -19,18 +19,21 @@ export class StaffRepository {
    */
   async getStaff(shopId: string): Promise<StaffMember[]> {
     try {
-      const { data, error } = await supabase
-        .from('staff')
-        .select('*')
-        .eq('shop_id', shopId)
-        .order('name', { ascending: true });
-
-      if (!error && data) {
-        // Calculate staff revenue & service count from actual bills
-        const { data: billItems } = await supabase
+      // Both reads only need the shop id, so they run together instead of one after the other
+      const [{ data, error }, { data: billItems }] = await Promise.all([
+        supabase
+          .from('staff')
+          .select('*')
+          .eq('shop_id', shopId)
+          .order('name', { ascending: true }),
+        // Staff revenue & service count from actual bills
+        supabase
           .from('bill_items')
           .select('staff_id, line_total_minor, quantity')
-          .eq('shop_id', shopId);
+          .eq('shop_id', shopId),
+      ]);
+
+      if (!error && data) {
 
         const revByStaff: Record<string, { rev: number; count: number }> = {};
         if (billItems) {
@@ -370,8 +373,8 @@ export class StaffRepository {
    */
   async recordStylistInvite(shopId: string, staffId: string): Promise<void> {
     const nowIso = new Date().toISOString();
-    try {
-      await supabase
+    if (isRemoteShop(shopId)) {
+      const result = await supabase
         .from('staff')
         .update({
           invitation_status: 'invited',
@@ -379,9 +382,12 @@ export class StaffRepository {
           updated_at: nowIso,
         } as any)
         .eq('id', staffId)
-        .eq('shop_id', shopId);
-    } catch (e) {
-      console.warn('recordStylistInvite offline warning:', e);
+        .eq('shop_id', shopId)
+        .select('id');
+      assertSaved(result, 'the invitation');
+      if (!result.data || result.data.length === 0) {
+        throw new Error('This stylist was not found on the server, so the invitation was not recorded.');
+      }
     }
 
     const list = (await this.getCachedStaff(shopId)) || [];
@@ -394,8 +400,17 @@ export class StaffRepository {
   /**
    * Mark stylist as active upon their first login into StyleFleet
    */
-  async markStylistActive(shopId: string, staffId: string, profileId?: string, phone?: string): Promise<void> {
+  async markStylistActive(shopId: string, staffId: string, profileId?: string, phone?: string): Promise<boolean> {
+    // Runs while a stylist is logging in, so a failure is reported (returned and logged) but never blocks the login
     const nowIso = new Date().toISOString();
+    let allSaved = true;
+    const note = (what: string, error: { message?: string } | null | undefined) => {
+      if (error) {
+        allSaved = false;
+        console.warn(`markStylistActive: ${what} was not saved:`, error.message);
+      }
+    };
+
     try {
       const updatePayload: any = {
         invitation_status: 'active',
@@ -404,46 +419,48 @@ export class StaffRepository {
       if (profileId) {
         updatePayload.profile_id = profileId;
       }
-      await supabase
+      const staffResult = await supabase
         .from('staff')
         .update(updatePayload)
         .eq('id', staffId)
         .eq('shop_id', shopId);
+      note('the stylist status', staffResult.error);
 
       if (profileId) {
         // Guarantee RLS membership via shop_members
-        try {
-          await supabase
-            .from('shop_members')
-            .upsert({
-              shop_id: shopId,
-              profile_id: profileId,
-              role: 'stylist',
-              is_active: true,
-            } as any, { onConflict: 'shop_id,profile_id' });
-        } catch (smErr) {
-          console.warn('shop_members upsert notice:', smErr);
-        }
+        const memberResult = await supabase
+          .from('shop_members')
+          .upsert({
+            shop_id: shopId,
+            profile_id: profileId,
+            role: 'stylist',
+            is_active: true,
+          } as any, { onConflict: 'shop_id,profile_id' });
+        note('the shop membership', memberResult.error);
 
         // Also attempt join_shop_as_stylist RPC if available
         if (phone) {
-          try {
-            await supabase.rpc('join_shop_as_stylist', {
-              p_shop_id: shopId,
-              p_phone: phone,
-            });
-          } catch {}
+          const rpcResult = await supabase.rpc('join_shop_as_stylist', {
+            p_shop_id: shopId,
+            p_phone: phone,
+          });
+          note('the join request', rpcResult.error);
         }
       }
     } catch (e) {
+      allSaved = false;
       console.warn('markStylistActive offline warning:', e);
     }
 
-    const list = (await this.getCachedStaff(shopId)) || [];
-    const updated = list.map((s) =>
-      s.id === staffId ? { ...s, invitation_status: 'active' as const } : s
-    );
-    await this.cacheStaff(shopId, updated);
+    // The phone shows "active" only once the server accepted it
+    if (allSaved) {
+      const list = (await this.getCachedStaff(shopId)) || [];
+      const updated = list.map((s) =>
+        s.id === staffId ? { ...s, invitation_status: 'active' as const } : s
+      );
+      await this.cacheStaff(shopId, updated);
+    }
+    return allSaved;
   }
 
   /**

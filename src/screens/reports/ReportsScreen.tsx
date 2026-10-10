@@ -88,6 +88,9 @@ export const isOpeningDueBill = (b: { invoice_number?: string; notes?: string | 
 type ReportPeriod = 'Day' | 'Week' | 'Month' | 'Custom';
 
 interface ReportsScreenProps {
+  /** Open on the sales summary instead of the daily report (used by the Home revenue tile). */
+  initialView?: 'report' | 'summary';
+  initialPeriod?: 'Day' | 'Week' | 'Month';
   bills: Bill[];
   expenses: Expense[];
   staff: StaffMember[];
@@ -136,6 +139,8 @@ interface DayWiseRow {
 }
 
 export const ReportsScreen: React.FC<ReportsScreenProps> = ({
+  initialView = 'report',
+  initialPeriod = 'Day',
   bills = [],
   expenses = [],
   staff = [],
@@ -156,8 +161,8 @@ export const ReportsScreen: React.FC<ReportsScreenProps> = ({
   const { colors } = useTheme();
   const { t } = useLanguage();
 
-  const [period, setPeriod] = useState<ReportPeriod>('Day');
-  const [reportView, setReportView] = useState<'report' | 'summary'>('report');
+  const [period, setPeriod] = useState<ReportPeriod>(initialPeriod);
+  const [reportView, setReportView] = useState<'report' | 'summary'>(initialView);
   const [isExportingPdf, setIsExportingPdf] = useState(false);
   const [isExportingCsv, setIsExportingCsv] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);

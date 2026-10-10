@@ -956,18 +956,21 @@ export class BillingRepository {
       confirmation_status: statuses.confirmation_status !== undefined ? statuses.confirmation_status : (current?.confirmation_status || 'Pending'),
     };
 
-    try {
+    if (isRemoteShop(shopId)) {
       const updatePayload: any = {};
       if (statuses.reminder_status !== undefined) updatePayload.reminder_status = statuses.reminder_status;
       if (statuses.confirmation_status !== undefined) updatePayload.confirmation_status = statuses.confirmation_status;
 
-      await supabase
+      const result = await supabase
         .from('bills')
         .update(updatePayload)
         .eq('id', billId)
-        .eq('shop_id', shopId);
-    } catch (e) {
-      console.warn('updateBillCommunicationStatus remote error, using cache:', e);
+        .eq('shop_id', shopId)
+        .select('id');
+      assertSaved(result, 'the message status');
+      if (!result.data || result.data.length === 0) {
+        throw new Error('This bill was not found on the server, so the message status was not saved.');
+      }
     }
 
     const updated = cachedBills.map((b) => (b.id === billId || b.invoice_number === billId ? updatedBill : b));

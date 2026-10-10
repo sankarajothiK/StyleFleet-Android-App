@@ -498,6 +498,15 @@ export const AppNavigator = () => {
     return true;
   };
 
+  // Where Reports opens: normally the daily report, or the summary when the Home revenue tile sent the owner here
+  const [reportsStart, setReportsStart] = useState<{ view: 'report' | 'summary'; period: 'Day' | 'Week' | 'Month' }>({
+    view: 'report',
+    period: 'Day',
+  });
+  useEffect(() => {
+    if (screen !== 'reports') setReportsStart({ view: 'report', period: 'Day' });
+  }, [screen]);
+
   const navigateTo = (nextScreen: ScreenName, resetHistory = false) => {
     if (isStylist && !canAccessScreen(nextScreen, true, stylistPerms)) {
       const key = requiredPermission(nextScreen);
@@ -792,10 +801,14 @@ export const AppNavigator = () => {
   // Business actions
   const handleToggleStar = async (customerId: string) => {
     if (!currentShop) return;
-    const newStar = await customerRepository.toggleStar(currentShop.id, customerId);
-    setCustomers((prev) =>
-      prev.map((c) => (c.id === customerId ? { ...c, is_starred: newStar } : c))
-    );
+    try {
+      const newStar = await customerRepository.toggleStar(currentShop.id, customerId);
+      setCustomers((prev) =>
+        prev.map((c) => (c.id === customerId ? { ...c, is_starred: newStar } : c))
+      );
+    } catch (e: any) {
+      Alert.alert('Error', e?.message || 'Could not update the VIP star');
+    }
   };
 
   const handleSettleDue = async (
@@ -1155,8 +1168,8 @@ export const AppNavigator = () => {
       if (selectedBill && (selectedBill.id === billId || selectedBill.invoice_number === billId)) {
         setSelectedBill(updated);
       }
-    } catch (e) {
-      console.warn('handleUpdateBillCommunicationStatus error:', e);
+    } catch (e: any) {
+      Alert.alert('Error', e?.message || 'Could not save the message status');
     }
   };
 
@@ -1448,8 +1461,12 @@ export const AppNavigator = () => {
 
   const handleDismissReminder = async (reminderId: string) => {
     if (!currentShop) return;
-    await reminderRepository.dismissReminder(currentShop.id, reminderId);
-    setReminders((prev) => prev.filter((r) => r.id !== reminderId));
+    try {
+      await reminderRepository.dismissReminder(currentShop.id, reminderId);
+      setReminders((prev) => prev.filter((r) => r.id !== reminderId));
+    } catch (e: any) {
+      Alert.alert('Error', e?.message || 'Could not dismiss the reminder');
+    }
   };
 
   const handleToggleRule = async (ruleId: string) => {
@@ -1645,6 +1662,11 @@ export const AppNavigator = () => {
               navigateTo('booking');
             }}
             onNavigateAppointments={() => navigateTo('appointments')}
+            onOpenReportsSummary={(period) => {
+              setReportsStart({ view: 'summary', period });
+              navigateTo('reports');
+            }}
+            onNavigateSales={() => navigateTo('sales')}
             onNavigateReminders={() => navigateTo('reminders')}
             onNavigateProfile={() => navigateTo('profile')}
             onOpenInvoice={(bill) => {
@@ -2231,9 +2253,8 @@ export const AppNavigator = () => {
             }}
             onUpdateService={async (serviceId, updates) => {
               if (!currentShop) return;
-              await serviceRepository.updateService(currentShop.id, serviceId, updates);
-              const reloaded = await serviceRepository.getServices(currentShop.id);
-              setServices(reloaded);
+              const updated = await serviceRepository.updateService(currentShop.id, serviceId, updates);
+              setServices(updated);
             }}
             onRemoveService={async (serviceId: string) => {
               if (!currentShop) return;
@@ -2259,7 +2280,15 @@ export const AppNavigator = () => {
             }}
             onImportMenuAI={async (items) => {
               if (!currentShop) return;
-              const imported = await serviceRepository.importMenuFromAI(currentShop.id, items);
+              let imported: Service[];
+              try {
+                imported = await serviceRepository.importMenuFromAI(currentShop.id, items);
+              } catch (e) {
+                // Whatever was saved before the failure is real, so show it before reporting the error
+                setServices(await serviceRepository.getServices(currentShop.id));
+                setCategories(await serviceRepository.getCategories(currentShop.id));
+                throw e;
+              }
               setServices(imported);
               const reloadedCats = await serviceRepository.getCategories(currentShop.id);
               setCategories(reloadedCats);
@@ -2325,6 +2354,8 @@ export const AppNavigator = () => {
 
         {screen === 'reports' && (
           <ReportsScreen
+            initialView={reportsStart.view}
+            initialPeriod={reportsStart.period}
             bills={bills}
             expenses={visibleExpenses}
             staff={staff}

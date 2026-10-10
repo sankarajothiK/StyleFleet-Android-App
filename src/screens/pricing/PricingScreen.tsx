@@ -911,7 +911,7 @@ export const PricingScreen = ({
 
                   <TouchableOpacity
                     activeOpacity={0.8}
-                    onPress={() => onToggleOffer(o.id)}
+                    onPress={() => onToggleOffer(o.id).catch((e: any) => Alert.alert('Error', e?.message || 'Could not update the offer'))}
                     accessibilityLabel={`${o.name} ${o.is_active ? 'on' : 'off'}`}
                     style={[
                       styles.toggleTrack,
@@ -938,7 +938,7 @@ export const PricingScreen = ({
                     <Text style={{ color: '#2DD4BF', fontSize: 11.5, fontWeight: '700' }}>Share</Text>
                   </TouchableOpacity>
 
-                  <TouchableOpacity onPress={() => onRemoveOffer(o.id)} style={styles.actionIconBtn} activeOpacity={0.7}>
+                  <TouchableOpacity onPress={() => onRemoveOffer(o.id).catch((e: any) => Alert.alert('Error', e?.message || 'Could not remove the offer'))} style={styles.actionIconBtn} activeOpacity={0.7}>
                     <TrashIcon size={16} color={colors.textDim} />
                   </TouchableOpacity>
                 </View>

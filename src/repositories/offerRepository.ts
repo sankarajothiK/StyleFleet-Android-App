@@ -1,6 +1,7 @@
 import { supabase } from '../lib/supabase';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Offer } from '../types/domain';
+import { assertSaved, isRemoteShop } from '../utils/persist';
 
 const STORAGE_KEY_OFFERS = '@salon_os_offers_cache';
 
@@ -60,8 +61,8 @@ export class OfferRepository {
       is_active: true,
     };
 
-    try {
-      const { data, error } = await supabase
+    if (isRemoteShop(shopId)) {
+      const result = await supabase
         .from('offers')
         .insert({
           shop_id: shopId,
@@ -74,12 +75,10 @@ export class OfferRepository {
         } as any)
         .select()
         .single();
-
-      if (!error && data) {
-        newOffer.id = data.id;
+      assertSaved(result, 'the offer');
+      if (result.data) {
+        newOffer.id = result.data.id;
       }
-    } catch (e) {
-      console.warn('Supabase offer save offline:', e);
     }
 
     const current = (await this.getCachedOffers(shopId)) || [];
@@ -97,17 +96,21 @@ export class OfferRepository {
     if (!target) return false;
 
     const nextState = !target.is_active;
-    target.is_active = nextState;
 
-    try {
-      await supabase
+    if (isRemoteShop(shopId)) {
+      const result = await supabase
         .from('offers')
         .update({ is_active: nextState } as any)
-        .eq('id', offerId);
-    } catch {
-      // ignore
+        .eq('id', offerId)
+        .eq('shop_id', shopId)
+        .select('id');
+      assertSaved(result, 'the offer');
+      if (!result.data || result.data.length === 0) {
+        throw new Error('This offer was not found on the server, so the change was not saved.');
+      }
     }
 
+    target.is_active = nextState;
     await this.cacheOffers(shopId, list);
     return nextState;
   }
@@ -117,13 +120,17 @@ export class OfferRepository {
     offerId: string,
     updates: { name?: string; description?: string; discount_value?: number }
   ): Promise<void> {
-    try {
-      await supabase
+    if (isRemoteShop(shopId)) {
+      const result = await supabase
         .from('offers')
         .update(updates as any)
-        .eq('id', offerId);
-    } catch {
-      // ignore
+        .eq('id', offerId)
+        .eq('shop_id', shopId)
+        .select('id');
+      assertSaved(result, 'the offer');
+      if (!result.data || result.data.length === 0) {
+        throw new Error('This offer was not found on the server, so the change was not saved.');
+      }
     }
 
     const current = (await this.getCachedOffers(shopId)) || [];
@@ -132,13 +139,13 @@ export class OfferRepository {
   }
 
   async removeOffer(shopId: string, offerId: string): Promise<void> {
-    try {
-      await supabase
+    if (isRemoteShop(shopId)) {
+      const result = await supabase
         .from('offers')
         .delete()
-        .eq('id', offerId);
-    } catch {
-      // ignore
+        .eq('id', offerId)
+        .eq('shop_id', shopId);
+      assertSaved(result, 'the offer removal');
     }
 
     const current = (await this.getCachedOffers(shopId)) || [];

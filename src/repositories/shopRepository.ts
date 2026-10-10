@@ -4,6 +4,7 @@ import { Database } from '../types/database';
 import { DEFAULT_ACCENT } from '../theme/colors';
 import { logoStorageService } from '../services/logoStorageService';
 import { generateInvoicePrefixFromShopName, sanitizeInvoicePrefix } from '../utils/invoicePrefix';
+import { assertSaved, isRemoteShop } from '../utils/persist';
 
 export type ShopRow = Database['public']['Tables']['shops']['Row'];
 
@@ -304,9 +305,15 @@ export class ShopRepository {
         const universalLogo = await logoStorageService.processAndUploadLogo(shopId, shopUpdates.logo_path);
         shopUpdates.logo_path = universalLogo;
       } catch (err) {
+        if (isRemoteShop(shopId)) {
+          throw new Error('The logo could not be uploaded, so it was not saved. Please check your connection and try again.');
+        }
         console.warn('Logo processing notice:', err);
       }
     }
+
+    // Phone-side copies change only after the server accepted the save
+    const localWrites: (() => Promise<void>)[] = [];
 
     if (updates.upi_id !== undefined) {
       const cached = await this.getCachedShop();
@@ -317,15 +324,17 @@ export class ShopRepository {
         upi_id: updates.upi_id,
       };
       if (shopId) {
-        try {
-          if (updates.upi_id) {
-            await AsyncStorage.setItem(`@salon_os_upi_id_${shopId}`, updates.upi_id);
-          } else {
-            await AsyncStorage.removeItem(`@salon_os_upi_id_${shopId}`);
+        localWrites.push(async () => {
+          try {
+            if (updates.upi_id) {
+              await AsyncStorage.setItem(`@salon_os_upi_id_${shopId}`, updates.upi_id);
+            } else {
+              await AsyncStorage.removeItem(`@salon_os_upi_id_${shopId}`);
+            }
+          } catch {
+            // ignore
           }
-        } catch {
-          // ignore
-        }
+        });
       }
     }
 
@@ -340,43 +349,50 @@ export class ShopRepository {
         invoice_prefix: cleanPrefix,
       };
       if (shopId) {
-        try {
-          await AsyncStorage.setItem(`@salon_os_invoice_prefix_${shopId}`, cleanPrefix);
-        } catch {
-          // ignore
-        }
+        localWrites.push(async () => {
+          try {
+            await AsyncStorage.setItem(`@salon_os_invoice_prefix_${shopId}`, cleanPrefix);
+          } catch {
+            // ignore
+          }
+        });
       }
     }
 
     let savedData: ShopRow | null = null;
 
-    try {
-      const { data, error } = await supabase
+    if (isRemoteShop(shopId)) {
+      const first = await supabase
         .from('shops')
         .update(shopUpdates as any)
         .eq('id', shopId)
         .select()
         .single();
 
-      if (!error && data) {
-        savedData = data as ShopRow;
-      } else if (error && ((shopUpdates as any).upi_id !== undefined || (shopUpdates as any).invoice_prefix !== undefined)) {
+      if (!first.error && first.data) {
+        savedData = first.data as ShopRow;
+      } else if (first.error && ((shopUpdates as any).upi_id !== undefined || (shopUpdates as any).invoice_prefix !== undefined)) {
         // Fallback: if top-level column is awaiting DB migration, update without it
         // The values are already safely mirrored in social_links above!
         const { upi_id, invoice_prefix, ...fallbackUpdates } = shopUpdates as any;
-        const { data: fbData, error: fbErr } = await supabase
+        const fallback = await supabase
           .from('shops')
           .update(fallbackUpdates as any)
           .eq('id', shopId)
           .select()
           .single();
-        if (!fbErr && fbData) {
-          savedData = fbData as ShopRow;
-        }
+        assertSaved(fallback, 'the shop details');
+        savedData = (fallback.data as ShopRow | null) ?? null;
+      } else {
+        assertSaved(first, 'the shop details');
       }
-    } catch {
-      // ignore
+
+      if (!savedData) {
+        throw new Error('The shop was not found on the server, so the changes were not saved.');
+      }
     }
+
+    for (const write of localWrites) await write();
 
     if (savedData) {
       const enriched = await this.enrichShopRow(savedData);
@@ -523,21 +539,21 @@ export class ShopRepository {
 
   async saveBookingHours(shopId: string, startTime: string, endTime: string): Promise<void> {
     const hours = { startTime: startTime.trim(), endTime: endTime.trim() };
+    if (shopId) {
+      const cachedShop = await this.getCachedShop();
+      const existingLinks = (cachedShop as any)?.social_links || {};
+      const updatedLinks = {
+        ...existingLinks,
+        booking_start_time: hours.startTime,
+        booking_end_time: hours.endTime,
+      };
+      // Saved on the server first; a rejected save throws before anything changes on the phone
+      await this.updateShop(shopId, { social_links: updatedLinks } as any);
+    }
     try {
       const storageKey = shopId ? `@salon_os_booking_hours_${shopId}` : '@salon_os_booking_hours';
       await AsyncStorage.setItem(storageKey, JSON.stringify(hours));
       await AsyncStorage.setItem('@salon_os_booking_hours', JSON.stringify(hours));
-
-      if (shopId) {
-        const cachedShop = await this.getCachedShop();
-        const existingLinks = (cachedShop as any)?.social_links || {};
-        const updatedLinks = {
-          ...existingLinks,
-          booking_start_time: hours.startTime,
-          booking_end_time: hours.endTime,
-        };
-        await this.updateShop(shopId, { social_links: updatedLinks } as any);
-      }
     } catch (err) {
       console.warn('saveBookingHours notice:', err);
     }
@@ -564,14 +580,14 @@ export class ShopRepository {
   }
 
   async setInvoiceNumberingMode(shopId: string, mode: 'monthly' | 'yearly'): Promise<void> {
+    if (shopId) {
+      // Saved on the server first; a rejected save throws before anything changes on the phone
+      await this.updateShop(shopId, { invoice_numbering_mode: mode } as any);
+    }
     try {
       const storageKey = shopId ? `@salon_os_invoice_mode_${shopId}` : '@salon_os_invoice_mode';
       await AsyncStorage.setItem(storageKey, mode);
       await AsyncStorage.setItem('@salon_os_invoice_mode', mode);
-
-      if (shopId) {
-        await this.updateShop(shopId, { invoice_numbering_mode: mode } as any);
-      }
     } catch (err) {
       console.warn('setInvoiceNumberingMode notice:', err);
     }
@@ -618,23 +634,23 @@ export class ShopRepository {
 
   async setInvoicePrefix(shopId: string, prefix: string): Promise<string> {
     const cleanPrefix = sanitizeInvoicePrefix(prefix);
+    if (shopId) {
+      const cached = await this.getCachedShop();
+      const existingSocial = (cached?.social_links as any) || {};
+      const updatedSocial = {
+        ...existingSocial,
+        invoice_prefix: cleanPrefix,
+      };
+      // Saved on the server first; a rejected save throws before anything changes on the phone
+      await this.updateShop(shopId, {
+        invoice_prefix: cleanPrefix,
+        social_links: updatedSocial,
+      } as any);
+    }
     try {
       const storageKey = shopId ? `@salon_os_invoice_prefix_${shopId}` : '@salon_os_invoice_prefix';
       await AsyncStorage.setItem(storageKey, cleanPrefix);
       await AsyncStorage.setItem('@salon_os_invoice_prefix', cleanPrefix);
-
-      if (shopId) {
-        const cached = await this.getCachedShop();
-        const existingSocial = (cached?.social_links as any) || {};
-        const updatedSocial = {
-          ...existingSocial,
-          invoice_prefix: cleanPrefix,
-        };
-        await this.updateShop(shopId, {
-          invoice_prefix: cleanPrefix,
-          social_links: updatedSocial,
-        } as any);
-      }
     } catch (err) {
       console.warn('setInvoicePrefix notice:', err);
     }

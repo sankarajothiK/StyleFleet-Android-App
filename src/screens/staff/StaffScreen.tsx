@@ -213,7 +213,11 @@ export const StaffScreen = ({
       });
 
     if (shopId && s.id) {
-      await staffRepository.recordStylistInvite(shopId, s.id);
+      try {
+        await staffRepository.recordStylistInvite(shopId, s.id);
+      } catch (e: any) {
+        Alert.alert('Invite not recorded', e?.message || 'The invite was opened, but it could not be marked as invited.');
+      }
     }
   };
 

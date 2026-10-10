@@ -2,7 +2,7 @@ import { supabase } from '../lib/supabase';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Customer } from '../types/domain';
 import { generateUuid, isValidUuid } from '../utils/uuid';
-import { friendlyDbMessage } from '../utils/persist';
+import { assertSaved, friendlyDbMessage, isRemoteShop } from '../utils/persist';
 
 const STORAGE_KEY_CUSTOMERS = '@salon_os_customers_cache';
 
@@ -12,18 +12,21 @@ export class CustomerRepository {
    */
   async getCustomers(shopId: string): Promise<Customer[]> {
     try {
-      const { data, error } = await supabase
-        .from('customers')
-        .select('*')
-        .eq('shop_id', shopId)
-        .order('name', { ascending: true });
-
-      if (!error && data) {
-        // Fetch actual bill totals to accurately aggregate visits, spend, and dues
-        const { data: billsData } = await supabase
+      // Both reads only need the shop id, so they run together instead of one after the other
+      const [{ data, error }, { data: billsData }] = await Promise.all([
+        supabase
+          .from('customers')
+          .select('*')
+          .eq('shop_id', shopId)
+          .order('name', { ascending: true }),
+        // Actual bill totals, to accurately aggregate visits, spend, and dues
+        supabase
           .from('bills')
           .select('id, invoice_number, customer_id, total_minor, paid_amount_minor, due_amount_minor, status, created_at, issued_at, notes, payments(*)')
-          .eq('shop_id', shopId);
+          .eq('shop_id', shopId),
+      ]);
+
+      if (!error && data) {
 
         let mergedBills = (billsData || []).slice();
         try {
@@ -359,7 +362,7 @@ export class CustomerRepository {
         // If there is an initial due, record it as a pending bill with bill items in Supabase
         if (initialDueMinor > 0) {
           const invNum = `DUE-${Date.now().toString().slice(-6)}`;
-          const { data: billData } = await supabase.from('bills').insert({
+          const billResult = await supabase.from('bills').insert({
             shop_id: shopId,
             customer_id: data.id,
             total_minor: initialDueMinor,
@@ -370,9 +373,13 @@ export class CustomerRepository {
             invoice_number: invNum,
             notes: 'Initial opening balance due',
           } as any).select().single();
+          const billData = billResult.data;
 
-          if (billData) {
-            await supabase.from('bill_items').insert({
+          let dueError: Error | null = null;
+          if (billResult.error || !billData) {
+            dueError = new Error(friendlyDbMessage(billResult.error, "the customer's opening due"));
+          } else {
+            const itemResult = await supabase.from('bill_items').insert({
               bill_id: billData.id,
               service_name_snapshot: 'Opening Due Balance',
               quantity: 1,
@@ -381,6 +388,16 @@ export class CustomerRepository {
               tax_minor: 0,
               line_total_minor: initialDueMinor,
             } as any);
+            if (itemResult.error) {
+              dueError = new Error(friendlyDbMessage(itemResult.error, "the customer's opening due"));
+              await supabase.from('bills').delete().eq('id', billData.id);
+            }
+          }
+
+          if (dueError) {
+            // Undo the customer so a retry starts clean instead of hitting "already exists"
+            await supabase.from('customers').delete().eq('id', data.id).eq('shop_id', shopId);
+            throw dueError;
           }
         }
       }
@@ -427,7 +444,7 @@ export class CustomerRepository {
 
     const createdCustomers: Customer[] = [];
     const dueByPhone = new Map(
-      uniqueContacts.map((c) => [c.phone.replace(/D/g, '').slice(-10), c.initialDueMinor || 0] as const)
+      uniqueContacts.map((c) => [c.phone.replace(/\D/g, '').slice(-10), c.initialDueMinor || 0] as const)
     );
     let saveError: { code?: string; message?: string } | null = null;
 
@@ -452,11 +469,11 @@ export class CustomerRepository {
       if (!error && data) {
         for (let i = 0; i < data.length; i++) {
           const row = data[i];
-          const due = dueByPhone.get(String(row.phone || '').replace(/D/g, '').slice(-10)) || 0;
+          const due = dueByPhone.get(String(row.phone || '').replace(/\D/g, '').slice(-10)) || 0;
 
           if (due > 0) {
             const invNum = `DUE-${(Date.now() + i).toString().slice(-6)}`;
-            const { data: bRow } = await supabase.from('bills').insert({
+            const billResult = await supabase.from('bills').insert({
               shop_id: shopId,
               customer_id: row.id,
               total_minor: due,
@@ -467,9 +484,11 @@ export class CustomerRepository {
               invoice_number: invNum,
               notes: 'Imported opening balance due',
             } as any).select().single();
+            assertSaved(billResult, `the opening due for ${row.name}`);
+            const bRow = billResult.data;
 
             if (bRow) {
-              await supabase.from('bill_items').insert({
+              const itemResult = await supabase.from('bill_items').insert({
                 bill_id: bRow.id,
                 service_name_snapshot: 'Opening Due Balance',
                 quantity: 1,
@@ -478,6 +497,7 @@ export class CustomerRepository {
                 tax_minor: 0,
                 line_total_minor: due,
               } as any);
+              assertSaved(itemResult, `the opening due for ${row.name}`);
             }
           }
 
@@ -541,67 +561,83 @@ export class CustomerRepository {
     }
     list[targetIdx] = updatedCust;
 
-    try {
+    if (isRemoteShop(shopId)) {
       const payload: any = {};
       if (updates.name !== undefined) payload.name = updatedCust.name;
       if (updates.phone !== undefined) payload.phone = updatedCust.phone;
       if (updates.notes !== undefined) payload.notes = updates.notes;
       if (updates.is_starred !== undefined) payload.is_starred = updates.is_starred;
 
-      await supabase
-        .from('customers')
-        .update(payload)
-        .eq('id', customerId);
+      // Saved on the server first; a rejected save throws before anything changes on the phone
+      if (Object.keys(payload).length > 0) {
+        const saved = await supabase
+          .from('customers')
+          .update(payload)
+          .eq('id', customerId)
+          .eq('shop_id', shopId)
+          .select('id');
+        assertSaved(saved, 'the customer');
+        if (!saved.data || saved.data.length === 0) {
+          throw new Error('This customer was not found on the server, so the changes were not saved.');
+        }
+      }
 
       // Handle due balance update in database
       if (updates.dueMinor !== undefined) {
-        const { data: existingDues } = await supabase
+        const duesResult = await supabase
           .from('bills')
           .select('id, total_minor')
           .eq('shop_id', shopId)
           .eq('customer_id', customerId)
           .in('status', ['pending', 'partially_paid'])
           .order('created_at', { ascending: false });
+        assertSaved(duesResult, "the customer's dues");
+        const existingDues = duesResult.data;
+        const dueLabel = "the customer's dues";
 
         if (updates.dueMinor === 0) {
           // If due set to 0, mark any pending bills as settled
           if (existingDues && existingDues.length > 0) {
             for (const b of existingDues) {
-              await supabase.from('bills').update({ status: 'paid' }).eq('id', b.id);
+              assertSaved(await supabase.from('bills').update({ status: 'paid' }).eq('id', b.id), dueLabel);
             }
           }
         } else if (existingDues && existingDues.length > 0) {
           // Update the latest pending due bill to match the new due amount
-          await supabase
-            .from('bills')
-            .update({
-              total_minor: updates.dueMinor,
-              subtotal_minor: updates.dueMinor,
-              notes: `due:${updates.dueMinor};paid:0`,
-            })
-            .eq('id', existingDues[0].id);
+          assertSaved(
+            await supabase
+              .from('bills')
+              .update({
+                total_minor: updates.dueMinor,
+                subtotal_minor: updates.dueMinor,
+                notes: `due:${updates.dueMinor};paid:0`,
+              })
+              .eq('id', existingDues[0].id),
+            dueLabel
+          );
           // Close any previous pending bills so their dues are not double-counted
           for (let i = 1; i < existingDues.length; i++) {
-            await supabase.from('bills').update({ status: 'paid' }).eq('id', existingDues[i].id);
+            assertSaved(await supabase.from('bills').update({ status: 'paid' }).eq('id', existingDues[i].id), dueLabel);
           }
         } else {
           // Create new pending bill for the due
           const invNum = `DUE-${Date.now().toString().slice(-6)}`;
-          await supabase.from('bills').insert({
-            shop_id: shopId,
-            customer_id: customerId,
-            total_minor: updates.dueMinor,
-            subtotal_minor: updates.dueMinor,
-            discount_minor: 0,
-            tax_minor: 0,
-            status: 'pending',
-            invoice_number: invNum,
-            notes: 'Adjusted customer due balance',
-          } as any);
+          assertSaved(
+            await supabase.from('bills').insert({
+              shop_id: shopId,
+              customer_id: customerId,
+              total_minor: updates.dueMinor,
+              subtotal_minor: updates.dueMinor,
+              discount_minor: 0,
+              tax_minor: 0,
+              status: 'pending',
+              invoice_number: invNum,
+              notes: 'Adjusted customer due balance',
+            } as any),
+            dueLabel
+          );
         }
       }
-    } catch (e) {
-      console.warn('Supabase customer update error:', e);
     }
 
     await this.cacheCustomers(shopId, list);
@@ -644,7 +680,8 @@ export class CustomerRepository {
     }
 
     if (pendingBillsError) {
-      return Math.max(0, cachedCust?.outstanding_due_minor || 0);
+      // Never report the old balance back as if the payment had been handled
+      throw new Error("The customer's dues could not be loaded, so the payment was not recorded. Please check your connection and try again.");
     }
 
     // Calculate current outstanding due across existing bills
@@ -678,24 +715,26 @@ export class CustomerRepository {
     // If there are NO pending bills in Supabase for this customer, create one now
     if (!pendingBillsError && pendingBills.length === 0 && currentCustDue > 0) {
       const invNum = `DUE-${Date.now().toString().slice(-6)}`;
-      try {
-        const { data: createdBill } = await supabase
-          .from('bills')
-          .insert({
-            shop_id: shopId,
-            customer_id: customerId,
-            total_minor: currentCustDue,
-            subtotal_minor: currentCustDue,
-            discount_minor: 0,
-            tax_minor: 0,
-            status: 'pending',
-            invoice_number: invNum,
-            notes: 'Customer opening due balance',
-          } as any)
-          .select()
-          .single();
+      const createdResult = await supabase
+        .from('bills')
+        .insert({
+          shop_id: shopId,
+          customer_id: customerId,
+          total_minor: currentCustDue,
+          subtotal_minor: currentCustDue,
+          discount_minor: 0,
+          tax_minor: 0,
+          status: 'pending',
+          invoice_number: invNum,
+          notes: 'Customer opening due balance',
+        } as any)
+        .select()
+        .single();
+      assertSaved(createdResult, 'the due payment');
+      const createdBill = createdResult.data;
 
-        if (createdBill) {
+      if (createdBill) {
+        assertSaved(
           await supabase.from('bill_items').insert({
             bill_id: createdBill.id,
             service_name_snapshot: 'Opening Due Balance',
@@ -704,16 +743,16 @@ export class CustomerRepository {
             discount_minor: 0,
             tax_minor: 0,
             line_total_minor: currentCustDue,
-          } as any);
+          } as any),
+          'the due payment'
+        );
 
-          pendingBills = [{ ...createdBill, payments: [] }];
-        }
-      } catch (e) {
-        console.warn('Error creating opening balance bill for settlement:', e);
+        pendingBills = [{ ...createdBill, payments: [] }];
       }
     }
 
     let remainingToAllocate = amountToSettle;
+    let settleFailure: Error | null = null;
 
     // 2. Allocate payment across pending bills (FIFO)
     for (const bill of pendingBills) {
@@ -730,50 +769,56 @@ export class CustomerRepository {
       if (billDue <= 0) continue;
 
       const payThisBill = Math.min(remainingToAllocate, billDue);
+
+      // Insert new payment event with today's date!
+      const paymentResult = await supabase.from('payments').insert({
+        shop_id: shopId,
+        bill_id: bill.id,
+        amount_minor: payThisBill,
+        method: resolvedMethod,
+        status: 'completed',
+        reference: `Due settlement payment (${resolvedMethod})`,
+        paid_at: now,
+      } as any);
+      if (paymentResult.error) {
+        settleFailure = new Error(friendlyDbMessage(paymentResult.error, 'the due payment'));
+        break;
+      }
+      // The payment is on the server, so it counts as settled from here on
       remainingToAllocate -= payThisBill;
 
-      try {
-        // Insert new payment event with today's date!
-        const { error: paymentInsertError } = await supabase.from('payments').insert({
-          shop_id: shopId,
-          bill_id: bill.id,
-          amount_minor: payThisBill,
-          method: resolvedMethod,
-          status: 'completed',
-          reference: `Due settlement payment (${resolvedMethod})`,
-          paid_at: now,
-        } as any);
+      const newBillTotalPaid = alreadyPaid + payThisBill;
+      const newBillDue = Math.max(0, bill.total_minor - newBillTotalPaid);
+      const newBillStatus = newBillDue === 0 ? 'paid' : 'partially_paid';
 
-        if (paymentInsertError) {
-          throw paymentInsertError;
-        }
-
-        const newBillTotalPaid = alreadyPaid + payThisBill;
-        const newBillDue = Math.max(0, bill.total_minor - newBillTotalPaid);
-        const newBillStatus = newBillDue === 0 ? 'paid' : 'partially_paid';
-
-        await supabase
-          .from('bills')
-          .update({
-            status: newBillStatus,
-            updated_at: now,
-            notes: `due:${newBillDue};paid:${newBillTotalPaid}`,
-          } as any)
-          .eq('id', bill.id);
-      } catch (e) {
-        console.warn('Error recording bill settlement payment:', e);
+      const statusResult = await supabase
+        .from('bills')
+        .update({
+          status: newBillStatus,
+          updated_at: now,
+          notes: `due:${newBillDue};paid:${newBillTotalPaid}`,
+        } as any)
+        .eq('id', bill.id);
+      if (statusResult.error) {
+        settleFailure = new Error(friendlyDbMessage(statusResult.error, 'the bill status'));
+        break;
       }
     }
 
     // 3. Exact remaining customer due
-    const newCustomerDue = Math.max(0, currentCustDue - amountToSettle);
+    // Only what the server actually recorded counts as settled
+    const settledAmount = amountToSettle - remainingToAllocate;
+    const newCustomerDue = Math.max(0, currentCustDue - settledAmount);
 
-    try {
-      await supabase
+    if (!settleFailure) {
+      const customerResult = await supabase
         .from('customers')
         .update({ outstanding_due_minor: newCustomerDue })
         .eq('id', customerId);
-    } catch {}
+      if (customerResult.error) {
+        settleFailure = new Error(friendlyDbMessage(customerResult.error, "the customer's balance"));
+      }
+    }
 
     // 4. Update local cache
     if (cachedCust) {
@@ -782,6 +827,15 @@ export class CustomerRepository {
         cachedCust.due_start_date = null;
       }
       await this.cacheCustomers(shopId, list);
+    }
+
+    if (settleFailure) {
+      const rupees = (minor: number) => `\u20b9${Math.round(minor / 100).toLocaleString('en-IN')}`;
+      throw new Error(
+        settledAmount > 0
+          ? `Only ${rupees(settledAmount)} of ${rupees(amountToSettle)} was recorded. ${settleFailure.message}`
+          : settleFailure.message
+      );
     }
 
     // 5. Also update bills cache so bill status and dues remain in perfect sync
@@ -864,17 +918,21 @@ export class CustomerRepository {
     if (!target) return false;
 
     const nextState = !target.is_starred;
-    target.is_starred = nextState;
 
-    try {
-      await supabase
+    if (isRemoteShop(shopId)) {
+      const result = await supabase
         .from('customers')
         .update({ is_starred: nextState } as any)
-        .eq('id', customerId);
-    } catch (e) {
-      console.warn('Supabase star toggle error:', e);
+        .eq('id', customerId)
+        .eq('shop_id', shopId)
+        .select('id');
+      assertSaved(result, 'the VIP star');
+      if (!result.data || result.data.length === 0) {
+        throw new Error('This customer was not found on the server, so the change was not saved.');
+      }
     }
 
+    target.is_starred = nextState;
     await this.cacheCustomers(shopId, list);
     return nextState;
   }
@@ -883,20 +941,24 @@ export class CustomerRepository {
    * Update customer notes
    */
   async updateNotes(shopId: string, customerId: string, notes: string): Promise<void> {
+    if (isRemoteShop(shopId)) {
+      const result = await supabase
+        .from('customers')
+        .update({ notes } as any)
+        .eq('id', customerId)
+        .eq('shop_id', shopId)
+        .select('id');
+      assertSaved(result, 'the notes');
+      if (!result.data || result.data.length === 0) {
+        throw new Error('This customer was not found on the server, so the notes were not saved.');
+      }
+    }
+
     const list = (await this.getCachedCustomers(shopId)) || [];
     const target = list.find((c) => c.id === customerId);
     if (target) {
       target.notes = notes;
       await this.cacheCustomers(shopId, list);
-    }
-
-    try {
-      await supabase
-        .from('customers')
-        .update({ notes } as any)
-        .eq('id', customerId);
-    } catch {
-      // ignore
     }
   }
 
